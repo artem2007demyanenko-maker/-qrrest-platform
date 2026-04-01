@@ -1,0 +1,1783 @@
+Last login: Sun Mar 29 20:53:46 on ttys006
+artemdemyanenko@MacBook-Air-Artem qr-rest % ssh root@178.159.94.192
+Connection closed by 178.159.94.192 port 22
+artemdemyanenko@MacBook-Air-Artem qr-rest % ssh root@178.159.94.192
+root@178.159.94.192's password: 
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-48-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Sun Mar 29 08:56:49 PM MSK 2026
+
+  System load:  0.0                Processes:             119
+  Usage of /:   20.0% of 29.44GB   Users logged in:       1
+  Memory usage: 37%                IPv4 address for ens3: 178.159.94.192
+  Swap usage:   0%                 IPv6 address for ens3: 2a12:5940:dcab::2
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+Expanded Security Maintenance for Applications is not enabled.
+
+265 updates can be applied immediately.
+153 of these updates are standard security updates.
+To see these additional updates run: apt list --upgradable
+
+1 additional security update can be applied with ESM Apps.
+Learn more about enabling ESM Apps service at https://ubuntu.com/esm
+
+
+Last login: Sun Mar 29 19:26:52 2026 from 178.159.94.192
+root@aboveamaranth:~# cd /opt/qr-rest
+dig TXT _acme-challenge.qrrest-menu.ru +short
+"BlnrNDadzKzXBEeKcx0UAVn1g4xu8JbCWzG3uSD6vOA"
+root@aboveamaranth:/opt/qr-rest# apt update && apt install -y dnsutils
+dig TXT _acme-challenge.qrrest-menu.ru +short
+Hit:1 https://mirror.yandex.ru/mirrors/download.docker.com/linux/ubuntu noble InRelease
+Hit:2 http://security.ubuntu.com/ubuntu noble-security InRelease
+Hit:3 http://archive.ubuntu.com/ubuntu noble InRelease
+Hit:4 http://archive.ubuntu.com/ubuntu noble-updates InRelease
+Hit:5 http://archive.ubuntu.com/ubuntu noble-backports InRelease
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+258 packages can be upgraded. Run 'apt list --upgradable' to see them.
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+The following additional packages will be installed:
+  bind9-dnsutils bind9-host bind9-libs
+The following NEW packages will be installed:
+  dnsutils
+The following packages will be upgraded:
+  bind9-dnsutils bind9-host bind9-libs
+3 upgraded, 1 newly installed, 0 to remove and 255 not upgraded.
+Need to get 1,467 kB of archives.
+After this operation, 55.3 kB of additional disk space will be used.
+Get:1 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 bind9-dnsutils amd64 1:9.18.39-0ubuntu0.24.04.3 [156 kB]
+Get:2 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 bind9-host amd64 1:9.18.39-0ubuntu0.24.04.3 [50.5 kB]
+Get:3 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 bind9-libs amd64 1:9.18.39-0ubuntu0.24.04.3 [1,257 kB]
+Get:4 http://archive.ubuntu.com/ubuntu noble-updates/universe amd64 dnsutils all 1:9.18.39-0ubuntu0.24.04.3 [3,684 B]
+Fetched 1,467 kB in 0s (6,564 kB/s)
+(Reading database ... 84658 files and directories currently installed.)
+Preparing to unpack .../bind9-dnsutils_1%3a9.18.39-0ubuntu0.24.04.3_amd64.deb ...
+Unpacking bind9-dnsutils (1:9.18.39-0ubuntu0.24.04.3) over (1:9.18.28-0ubuntu0.24.04.1) ...
+Preparing to unpack .../bind9-host_1%3a9.18.39-0ubuntu0.24.04.3_amd64.deb ...
+Unpacking bind9-host (1:9.18.39-0ubuntu0.24.04.3) over (1:9.18.28-0ubuntu0.24.04.1) ...
+Preparing to unpack .../bind9-libs_1%3a9.18.39-0ubuntu0.24.04.3_amd64.deb ...
+Unpacking bind9-libs:amd64 (1:9.18.39-0ubuntu0.24.04.3) over (1:9.18.28-0ubuntu0.24.04.1) ...
+Selecting previously unselected package dnsutils.
+Preparing to unpack .../dnsutils_1%3a9.18.39-0ubuntu0.24.04.3_all.deb ...
+Unpacking dnsutils (1:9.18.39-0ubuntu0.24.04.3) ...
+Setting up bind9-libs:amd64 (1:9.18.39-0ubuntu0.24.04.3) ...
+Setting up bind9-host (1:9.18.39-0ubuntu0.24.04.3) ...
+Setting up bind9-dnsutils (1:9.18.39-0ubuntu0.24.04.3) ...
+Setting up dnsutils (1:9.18.39-0ubuntu0.24.04.3) ...
+Processing triggers for libc-bin (2.39-0ubuntu8.3) ...
+Processing triggers for man-db (2.12.0-4build2) ...
+Scanning processes...                                                                                                                      
+Scanning linux images...                                                                                                                   
+
+Running kernel seems to be up-to-date.
+
+No services need to be restarted.
+
+No containers need to be restarted.
+
+No user sessions are running outdated binaries.
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
+"BlnrNDadzKzXBEeKcx0UAVn1g4xu8JbCWzG3uSD6vOA"
+root@aboveamaranth:/opt/qr-rest# Connection to 178.159.94.192 closed by remote host.
+Connection to 178.159.94.192 closed.
+artemdemyanenko@MacBook-Air-Artem qr-rest % cd ~/Documents/qr-rest
+artemdemyanenko@MacBook-Air-Artem qr-rest % grep -n "Menu Management" public_html/restaurant/menu_manage.php
+grep -n "mm-nav-panel" public_html/restaurant/menu_manage.php
+grep -n "Open Guest Menu" public_html/restaurant/menu_manage.php
+508:    <title>Menu Management — <?= e($restaurantName) ?> — <?= e($appName) ?></title>
+568:                    <h1 class="text-2xl md:text-3xl font-bold text-white tracking-tight">Menu Management</h1>
+524:    <button type="button" id="mm-nav-open" class="shrink-0 min-h-[44px] min-w-[44px] rounded-xl border border-slate-700 bg-slate-900/80 text-sm font-medium text-slate-200 touch-manipulation" aria-expanded="false" aria-controls="mm-nav-panel">Menu</button>
+528:    <div id="mm-nav-panel" class="absolute right-0 top-0 bottom-0 w-[min(100%,19rem)] bg-[#0c1222] border-l border-slate-800 shadow-2xl flex flex-col" style="padding:max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left))">
+575:                            <span aria-hidden="true" class="text-emerald-400">↗</span> Open Guest Menu
+artemdemyanenko@MacBook-Air-Artem qr-rest % scp public_html/restaurant/menu_manage.php root@178.159.94.192:/opt/qr-rest/public_html/restaurant/menu_manage.php
+root@178.159.94.192's password: 
+menu_manage.php                                                                                          100%   64KB 468.0KB/s   00:00    
+artemdemyanenko@MacBook-Air-Artem qr-rest % scp public_html/restaurant/menu_manage.php root@178.159.94.192:/opt/qr-rest/public_html/restaurant/menu_manage.php
+root@178.159.94.192's password: 
+artemdemyanenko@MacBook-Air-Artem qr-rest % cd ~/Documents/qr-rest
+artemdemyanenko@MacBook-Air-Artem qr-rest % scp public_html/restaurant/menu_manage.php root@178.159.94.192:/opt/qr-rest/public_html/restaurant/menu_manage.php
+root@178.159.94.192's password: 
+menu_manage.php                                                                                          100%   64KB 467.2KB/s   00:00    
+artemdemyanenko@MacBook-Air-Artem qr-rest % docker exec -it qr-rest_app_1 bash
+cd /var/www/html/public_html/restaurant
+sed -n '1,120p' menu_manage.php
+Error response from daemon: No such container: qr-rest_app_1
+cd: no such file or directory: /var/www/html/public_html/restaurant
+sed: menu_manage.php: No such file or directory
+artemdemyanenko@MacBook-Air-Artem qr-rest % docker exec -it qr-rest_db_1 mysql -uroot -prootpass -e "USE qr_rest; SELECT id, email FROM users;"
+Error response from daemon: No such container: qr-rest_db_1
+artemdemyanenko@MacBook-Air-Artem qr-rest % ssh root@178.159.94.192
+root@178.159.94.192's password: 
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-48-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Mon Mar 30 09:46:17 AM MSK 2026
+
+  System load:  0.0                Processes:             115
+  Usage of /:   20.0% of 29.44GB   Users logged in:       1
+  Memory usage: 36%                IPv4 address for ens3: 178.159.94.192
+  Swap usage:   0%                 IPv6 address for ens3: 2a12:5940:dcab::2
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+Expanded Security Maintenance for Applications is not enabled.
+
+262 updates can be applied immediately.
+150 of these updates are standard security updates.
+To see these additional updates run: apt list --upgradable
+
+1 additional security update can be applied with ESM Apps.
+Learn more about enabling ESM Apps service at https://ubuntu.com/esm
+
+
+Last login: Mon Mar 30 09:44:58 2026 from 144.31.170.96
+root@aboveamaranth:~# cd /opt/qr-rest
+docker exec -it qr-rest_db_1 mysql -uroot -prootpass -e "USE qr_rest; ALTER TABLE orders ADD COLUMN loyalty_points_spent INT NOT NULL DEFAULT 0 AFTER loyalty_points_accrued;"
+docker-compose --env-file .env.production -f docker-compose.prod.yml restart app
+mysql: [Warning] Using a password on the command line interface can be insecure.
+Restarting qr-rest_app_1 ... done
+root@aboveamaranth:/opt/qr-rest# Connection to 178.159.94.192 closed by remote host.
+Connection to 178.159.94.192 closed.
+artemdemyanenko@MacBook-Air-Artem qr-rest % ssh root@178.159.94.192
+kex_exchange_identification: read: Operation timed out
+banner exchange: Connection to 178.159.94.192 port 22: Operation timed out
+artemdemyanenko@MacBook-Air-Artem qr-rest % ssh root@178.159.94.192
+root@178.159.94.192's password: 
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-48-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Tue Mar 31 02:43:55 AM MSK 2026
+
+  System load:  0.0                Processes:             115
+  Usage of /:   20.1% of 29.44GB   Users logged in:       1
+  Memory usage: 37%                IPv4 address for ens3: 178.159.94.192
+  Swap usage:   0%                 IPv6 address for ens3: 2a12:5940:dcab::2
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+Expanded Security Maintenance for Applications is not enabled.
+
+262 updates can be applied immediately.
+150 of these updates are standard security updates.
+To see these additional updates run: apt list --upgradable
+
+1 additional security update can be applied with ESM Apps.
+Learn more about enabling ESM Apps service at https://ubuntu.com/esm
+
+
+Last login: Mon Mar 30 09:48:51 2026 from 109.196.202.66
+root@aboveamaranth:~# Connection to 178.159.94.192 closed by remote host.
+Connection to 178.159.94.192 closed.
+artemdemyanenko@MacBook-Air-Artem qr-rest % ssh root@178.159.94.192
+root@178.159.94.192's password: 
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-48-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Tue Mar 31 02:46:40 AM MSK 2026
+
+  System load:  0.01               Processes:             113
+  Usage of /:   20.1% of 29.44GB   Users logged in:       1
+  Memory usage: 37%                IPv4 address for ens3: 178.159.94.192
+  Swap usage:   0%                 IPv6 address for ens3: 2a12:5940:dcab::2
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+Expanded Security Maintenance for Applications is not enabled.
+
+262 updates can be applied immediately.
+150 of these updates are standard security updates.
+To see these additional updates run: apt list --upgradable
+
+1 additional security update can be applied with ESM Apps.
+Learn more about enabling ESM Apps service at https://ubuntu.com/esm
+
+
+Last login: Tue Mar 31 02:43:56 2026 from 144.31.170.59
+root@aboveamaranth:~# cat > /opt/qr-rest/public_html/staff/kitchen.php <<'PHP'
+<?php
+
+require_once __DIR__ . '/../../app/bootstrap.php';
+
+require_login();
+
+if (!$currentRestaurant) {
+    http_response_code(404);
+    echo 'Контекст ресторана не найден';
+    exit;
+}
+
+require_restaurant_role((int)$currentRestaurant['id'], ['staff', 'admin', 'owner']);
+
+if (empty($_SESSION['csrf'])) {
+    $_SESSION['csrf'] = bin2hex(random_bytes(32));
+}
+$csrfToken = (string)($_SESSION['csrf'] ?? '');
+
+$user = auth_user();
+?>
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Кухня — <?= e($currentRestaurant['name']) ?></title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: Inter, system-ui, sans-serif; }
+PHPtml>t>terval(fetchKitchen, 5000);;lse;essage) ? data.message : 'Ошибка обновления статуса');-950/50 p-3 text-xs text-slate-500">Пусто</d
+root@aboveamaranth:~# cat > /opt/qr-rest/public_html/staff/kitchen.php <<'PHP'
+<?php
+
+require_once __DIR__ . '/../../app/bootstrap.php';
+
+require_login();
+
+if (!$currentRestaurant) {
+    http_response_code(404);
+    echo 'Контекст ресторана не найден';
+    exit;
+}
+
+require_restaurant_role((int)$currentRestaurant['id'], ['staff', 'admin', 'owner']);
+
+if (empty($_SESSION['csrf'])) {
+    $_SESSION['csrf'] = bin2hex(random_bytes(32));
+}
+$csrfToken = (string)($_SESSION['csrf'] ?? '');
+
+$user = auth_user();
+?>
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Кухня — <?= e($currentRestaurant['name']) ?></title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: Inter, system-ui, sans-serif; }
+PHtml>t>terval(fetchKitchen, 5000);;lse;essage) ? data.message : 'Ошибка обновления статуса');-950/50 p-3 text-xs text-slate-500">Пусто</d
+> 
+> ^C
+root@aboveamaranth:~# cd /opt/qr-rest
+root@aboveamaranth:/opt/qr-rest# cat > /opt/qr-rest/public_html/staff/kitchen.php <<'PHP'
+<?php
+
+require_once __DIR__ . '/../../app/bootstrap.php';
+
+require_login();
+
+if (!$currentRestaurant) {
+    http_response_code(404);
+    echo 'Контекст ресторана не найден';
+    exit;
+}
+
+require_restaurant_role((int)$currentRestaurant['id'], ['staff', 'admin', 'owner']);
+
+if (empty($_SESSION['csrf'])) {
+    $_SESSION['csrf'] = bin2hex(random_bytes(32));
+}
+$csrfToken = (string)($_SESSION['csrf'] ?? '');
+
+$user = auth_user();
+?>
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Кухня — <?= e($currentRestaurant['name']) ?></title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: Inter, system-ui, sans-serif; }
+PHPtml>t>terval(fetchKitchen, 5000);;lse;essage) ? data.message : 'Ошибка обновления статуса');-950/50 p-3 text-xs text-slate-500">Пусто</d
+root@aboveamaranth:/opt/qr-rest# cat > /opt/qr-rest/public_html/staff/kitchen_api.php <<'PHP'
+<?php
+
+require_once __DIR__ . '/../../app/bootstrap.php';
+
+require_login();
+
+header('Content-Type: application/json; charset=utf-8');
+
+if (!$currentRestaurant) {
+    http_response_code(404);
+    echo json_encode(['success' => false, 'message' => 'Контекст ресторана не найден'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+require_restaurant_role((int)$currentRestaurant['id'], ['staff', 'admin', 'owner']);
+
+$pdo = db();
+$restaurantId = (int)$currentRestaurant['id'];
+
+try {
+    $stmt = $pdo->prepare("
+        SELECT 
+            o.id,
+            o.table_id,
+            o.order_status,
+            o.payment_status,
+            o.payment_type,
+            o.total_price,
+            o.created_at,
+            t.name AS table_name
+        FROM orders o
+        LEFT JOIN tables t ON t.id = o.table_id
+        WHERE o.restaurant_id = :restaurant_id
+PHP ], JSON_UNESCAPED_UNICODE);грузки кухни' $restaurantId . ' ' . $e->getMessage());d_at']));ed_at'])) / 60));
+root@aboveamaranth:/opt/qr-rest# docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/staff/kitchen.php
+No syntax errors detected in /var/www/html/public_html/staff/kitchen.php
+root@aboveamaranth:/opt/qr-rest# docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/staff/kitchen_api.php
+No syntax errors detected in /var/www/html/public_html/staff/kitchen_api.php
+root@aboveamaranth:/opt/qr-rest# cd /opt/qr-rest
+docker-compose --env-file .env.production -f docker-compose.prod.yml restart app
+Restarting qr-rest_app_1 ... done
+root@aboveamaranth:/opt/qr-rest# Connection to 178.159.94.192 closed by remote host.
+Connection to 178.159.94.192 closed.
+artemdemyanenko@MacBook-Air-Artem qr-rest % cd ~/Documents/qr-rest
+
+ls app/kds_helpers.php
+ls public_html/staff/kitchen_api.php
+ls public_html/staff/kitchen_item_update.php
+ls app/migrations/2026_06_20_kds_station_status.sql
+app/kds_helpers.php
+public_html/staff/kitchen_api.php
+public_html/staff/kitchen_item_update.php
+app/migrations/2026_06_20_kds_station_status.sql
+artemdemyanenko@MacBook-Air-Artem qr-rest % ls public_html/staff/kitchen.php
+ls public_html/restaurant/menu_manage.php
+ls public_html/staff/orders_api.php
+ls public_html/staff/floorplan_api.php
+ls public_html/staff/floorplan.php
+ls public_html/ajax/order_status.php
+public_html/staff/kitchen.php
+public_html/restaurant/menu_manage.php
+public_html/staff/orders_api.php
+public_html/staff/floorplan_api.php
+public_html/staff/floorplan.php
+public_html/ajax/order_status.php
+artemdemyanenko@MacBook-Air-Artem qr-rest % ssh root@178.159.94.192
+^C
+artemdemyanenko@MacBook-Air-Artem qr-rest % ssh root@178.159.94.192
+≠ё^C
+artemdemyanenko@MacBook-Air-Artem qr-rest % ssh root@178.159.94.192
+root@178.159.94.192's password: 
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-48-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Tue Mar 31 09:31:47 PM MSK 2026
+
+  System load:  0.01               Processes:             114
+  Usage of /:   20.1% of 29.44GB   Users logged in:       1
+  Memory usage: 37%                IPv4 address for ens3: 178.159.94.192
+  Swap usage:   0%                 IPv6 address for ens3: 2a12:5940:dcab::2
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+Expanded Security Maintenance for Applications is not enabled.
+
+262 updates can be applied immediately.
+150 of these updates are standard security updates.
+To see these additional updates run: apt list --upgradable
+
+1 additional security update can be applied with ESM Apps.
+Learn more about enabling ESM Apps service at https://ubuntu.com/esm
+
+
+Last login: Tue Mar 31 02:46:40 2026 from 144.31.170.41
+root@aboveamaranth:~# cd /opt/qr-rest
+root@aboveamaranth:/opt/qr-rest# mkdir -p backups/kds_wave1_$(date +%F_%H-%M)
+root@aboveamaranth:/opt/qr-rest# cp public_html/staff/kitchen.php backups/kds_wave1_$(date +%F_%H-%M)/ 2>/dev/null || true
+cp public_html/restaurant/menu_manage.php backups/kds_wave1_$(date +%F_%H-%M)/ 2>/dev/null || true
+cp public_html/staff/orders_api.php backups/kds_wave1_$(date +%F_%H-%M)/ 2>/dev/null || true
+cp public_html/staff/floorplan_api.php backups/kds_wave1_$(date +%F_%H-%M)/ 2>/dev/null || true
+cp public_html/staff/floorplan.php backups/kds_wave1_$(date +%F_%H-%M)/ 2>/dev/null || true
+cp public_html/ajax/order_status.php backups/kds_wave1_$(date +%F_%H-%M)/ 2>/dev/null || true
+root@aboveamaranth:/opt/qr-rest# cd ~/Documents/qr-rest
+-bash: cd: /root/Documents/qr-rest: No such file or directory
+root@aboveamaranth:/opt/qr-rest# scp app/kds_helpers.php root@178.159.94.192:/opt/qr-rest/app/kds_helpers.php
+scp public_html/staff/kitchen_api.php root@178.159.94.192:/opt/qr-rest/public_html/staff/kitchen_api.php
+scp public_html/staff/kitchen_item_update.php root@178.159.94.192:/opt/qr-rest/public_html/staff/kitchen_item_update.php
+scp app/migrations/2026_06_20_kds_station_status.sql root@178.159.94.192:/opt/qr-rest/app/migrations/2026_06_20_kds_station_status.sq
+root@178.159.94.192's password: 
+root@178.159.94.192's password: 
+root@178.159.94.192's password: 
+root@178.159.94.192's password: 
+root@aboveamaranth:/opt/qr-rest# docker exec -i qr-rest_db_1 mysql -uroot -prootpass qr_rest < /opt/qr-rest/app/migrations/2026_06_20_kds_station_status.sql
+mysql: [Warning] Using a password on the command line interface can be insecure.
+root@aboveamaranth:/opt/qr-rest# ssh root@178.159.94.192
+cd /opt/qr-rest
+root@178.159.94.192's password: 
+Permission denied, please try again.
+root@178.159.94.192's password: 
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-48-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Tue Mar 31 09:40:18 PM MSK 2026
+
+  System load:  0.0                Processes:             118
+  Usage of /:   20.1% of 29.44GB   Users logged in:       1
+  Memory usage: 37%                IPv4 address for ens3: 178.159.94.192
+  Swap usage:   0%                 IPv6 address for ens3: 2a12:5940:dcab::2
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+Expanded Security Maintenance for Applications is not enabled.
+
+262 updates can be applied immediately.
+150 of these updates are standard security updates.
+To see these additional updates run: apt list --upgradable
+
+1 additional security update can be applied with ESM Apps.
+Learn more about enabling ESM Apps service at https://ubuntu.com/esm
+
+
+Last login: Tue Mar 31 21:31:47 2026 from 62.183.18.43
+root@aboveamaranth:~# cd /opt/qr-rest
+root@aboveamaranth:/opt/qr-rest# docker exec -i qr-rest_db_1 mysql -uroot -prootpass qr_rest < /opt/qr-rest/app/migrations/2026_06_20_kds_station_status.sql
+mysql: [Warning] Using a password on the command line interface can be insecure.
+1
+1
+1
+1
+1
+1
+1
+1
+root@aboveamaranth:/opt/qr-rest# cd /opt/qr-rest
+docker-compose --env-file .env.production -f docker-compose.prod.yml restart app
+Restarting qr-rest_app_1 ... done
+root@aboveamaranth:/opt/qr-rest# docker exec -it qr-rest_app_1 php -l /var/www/html/app/kds_helpers.php
+docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/staff/kitchen_api.php
+docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/staff/kitchen_item_update.php
+docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/staff/kitchen.php
+docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/restaurant/menu_manage.php
+docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/staff/orders_api.php
+docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/staff/floorplan_api.php
+docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/staff/floorplan.php
+docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/ajax/order_status.php
+No syntax errors detected in /var/www/html/app/kds_helpers.php
+No syntax errors detected in /var/www/html/public_html/staff/kitchen_api.php
+No syntax errors detected in /var/www/html/public_html/staff/kitchen_item_update.php
+No syntax errors detected in /var/www/html/public_html/staff/kitchen.php
+No syntax errors detected in /var/www/html/public_html/restaurant/menu_manage.php
+No syntax errors detected in /var/www/html/public_html/staff/orders_api.php
+Could not open input file: /var/www/html/public_html/staff/floorplan_api.php
+No syntax errors detected in /var/www/html/public_html/staff/floorplan.php
+No syntax errors detected in /var/www/html/public_html/ajax/order_status.php
+root@aboveamaranth:/opt/qr-rest# Read from remote host 178.159.94.192: Connection reset by peer
+Connection to 178.159.94.192 closed.
+client_loop: send disconnect: Broken pipe
+artemdemyanenko@MacBook-Air-Artem qr-rest % ssh root@178.159.94.192
+root@178.159.94.192's password: 
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-48-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Tue Mar 31 09:52:29 PM MSK 2026
+
+  System load:  0.0                Processes:             119
+  Usage of /:   20.1% of 29.44GB   Users logged in:       1
+  Memory usage: 38%                IPv4 address for ens3: 178.159.94.192
+  Swap usage:   0%                 IPv6 address for ens3: 2a12:5940:dcab::2
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+Expanded Security Maintenance for Applications is not enabled.
+
+262 updates can be applied immediately.
+150 of these updates are standard security updates.
+To see these additional updates run: apt list --upgradable
+
+1 additional security update can be applied with ESM Apps.
+Learn more about enabling ESM Apps service at https://ubuntu.com/esm
+
+
+Last login: Tue Mar 31 21:40:19 2026 from 178.159.94.192
+root@aboveamaranth:~# ls -l /opt/qr-rest/public_html/staff/floorplan_api.php
+ls: cannot access '/opt/qr-rest/public_html/staff/floorplan_api.php': No such file or directory
+root@aboveamaranth:~# cd /opt/qr-rest
+root@aboveamaranth:/opt/qr-rest# ls -l /opt/qr-rest/public_html/staff/floorplan_api.php
+ls: cannot access '/opt/qr-rest/public_html/staff/floorplan_api.php': No such file or directory
+root@aboveamaranth:/opt/qr-rest# cd ~/Documents/qr-rest
+ls -l public_html/staff/floorplan_api.php
+-bash: cd: /root/Documents/qr-rest: No such file or directory
+ls: cannot access 'public_html/staff/floorplan_api.php': No such file or directory
+root@aboveamaranth:/opt/qr-rest# grep -n "floorplan_api" /opt/qr-rest/public_html/staff/floorplan.php
+root@aboveamaranth:/opt/qr-rest# find /opt/qr-rest -name "floorplan_api.php"
+root@aboveamaranth:/opt/qr-rest# find /opt/qr-rest -name "floorplan_api.php"
+root@aboveamaranth:/opt/qr-rest# cd /opt/qr-rest
+
+ls -l app/kds_helpers.php
+ls -l public_html/staff/kitchen_api.php
+ls -l public_html/staff/kitchen_item_update.php
+ls -l public_html/staff/kitchen.php
+ls -l public_html/restaurant/menu_manage.php
+ls -l public_html/staff/orders_api.php
+ls -l public_html/staff/floorplan.php
+ls -l public_html/ajax/order_status.php
+ls -l app/migrations/2026_06_20_kds_station_status.sql
+-rw-r--r-- 1 root root 6215 Mar 31 21:38 app/kds_helpers.php
+-rw-r--r-- 1 root root 12462 Mar 31 21:38 public_html/staff/kitchen_api.php
+-rw-r--r-- 1 root root 8282 Mar 31 21:38 public_html/staff/kitchen_item_update.php
+-rw-r--r-- 1 501 staff 12029 Mar 31 02:48 public_html/staff/kitchen.php
+-rw-r--r-- 1 root root 65374 Mar 29 22:23 public_html/restaurant/menu_manage.php
+-rw-r--r-- 1 501 staff 2356 Mar 18 22:07 public_html/staff/orders_api.php
+-rw-r--r-- 1 501 staff 25556 Mar 18 22:07 public_html/staff/floorplan.php
+-rw-r--r-- 1 501 staff 3469 Mar 18 22:07 public_html/ajax/order_status.php
+-rw-r--r-- 1 root root 1731 Mar 31 21:39 app/migrations/2026_06_20_kds_station_status.sql
+root@aboveamaranth:/opt/qr-rest# cd /opt/qr-rest
+docker exec -i qr-rest_db_1 mysql -uroot -prootpass qr_rest < app/migrations/2026_06_20_kds_station_status.sql
+mysql: [Warning] Using a password on the command line interface can be insecure.
+1
+1
+1
+1
+1
+1
+1
+1
+root@aboveamaranth:/opt/qr-rest# cd /opt/qr-rest
+docker-compose --env-file .env.production -f docker-compose.prod.yml restart app
+Restarting qr-rest_app_1 ... done
+root@aboveamaranth:/opt/qr-rest# Read from remote host 178.159.94.192: Connection reset by peer
+Connection to 178.159.94.192 closed.
+client_loop: send disconnect: Broken pipe
+artemdemyanenko@MacBook-Air-Artem qr-rest % cd ~/Documents/qr-rest
+ls public_html/saas.php
+public_html/saas.php
+artemdemyanenko@MacBook-Air-Artem qr-rest % scp public_html/saas.php root@178.159.94.192:/opt/qr-rest/public_html/saas.php
+root@178.159.94.192's password: 
+saas.php                                                                                                 100%   39KB 445.4KB/s   00:00    
+artemdemyanenko@MacBook-Air-Artem qr-rest % scp -r public_html/assets root@178.159.94.192:/opt/qr-rest/public_html/
+root@178.159.94.192's password: 
+Connection reset by 178.159.94.192 port 22
+scp: Connection closed
+artemdemyanenko@MacBook-Air-Artem qr-rest % scp -r public_html/assets root@178.159.94.192:/opt/qr-rest/public_html/
+root@178.159.94.192's password: 
+brand.css                                                                                                100%  253     5.5KB/s   00:00    
+motion.css                                                                                               100% 3374    57.3KB/s   00:00    
+polish.css                                                                                               100% 4541    80.6KB/s   00:00    
+command-palette.js                                                                                       100% 3623    58.7KB/s   00:00    
+motion.js                                                                                                100% 3228    71.9KB/s   00:00    
+toast.js                                                                                                 100% 1271    27.4KB/s   00:00    
+apple-touch-icon.png                                                                                     100% 1041    19.5KB/s   00:00    
+favicon-32.png                                                                                           100%  379     9.3KB/s   00:00    
+favicon.svg                                                                                              100% 1044    24.8KB/s   00:00    
+artemdemyanenko@MacBook-Air-Artem qr-rest % cd /opt/qr-rest
+docker-compose --env-file .env.production -f docker-compose.prod.yml restart app
+cd: no such file or directory: /opt/qr-rest
+couldn't find env file: /Users/artemdemyanenko/Documents/qr-rest/.env.production
+artemdemyanenko@MacBook-Air-Artem qr-rest % ssh root@178.159.94.192
+root@178.159.94.192's password: 
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-48-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Tue Mar 31 10:25:43 PM MSK 2026
+
+  System load:  0.04               Processes:             123
+  Usage of /:   20.1% of 29.44GB   Users logged in:       1
+  Memory usage: 38%                IPv4 address for ens3: 178.159.94.192
+  Swap usage:   0%                 IPv6 address for ens3: 2a12:5940:dcab::2
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+Expanded Security Maintenance for Applications is not enabled.
+
+262 updates can be applied immediately.
+150 of these updates are standard security updates.
+To see these additional updates run: apt list --upgradable
+
+1 additional security update can be applied with ESM Apps.
+Learn more about enabling ESM Apps service at https://ubuntu.com/esm
+
+
+Last login: Tue Mar 31 21:52:30 2026 from 62.183.18.43
+root@aboveamaranth:~# cd /opt/qr-rest
+docker-compose --env-file .env.production -f docker-compose.prod.yml restart app
+Restarting qr-rest_app_1 ... done
+root@aboveamaranth:/opt/qr-rest# docker logs qr-rest_app_1 2>&1 | grep 559d625c5bad0b86
+[Tue Mar 31 19:26:49.613848 2026] [php:notice] [pid 21:tid 21] [client 172.18.0.4:50700] STABILITY_ERROR saas.php rid=559d625c5bad0b86 Undefined constant "BRAND_NAME_FULL"
+root@aboveamaranth:/opt/qr-rest# cd /opt/qr-rest
+grep -R "BRAND_NAME_FULL" -n .
+./public_html/saas.php:74:    <title><?= e(BRAND_NAME_FULL) ?> — цифровые меню и заказы</title>
+root@aboveamaranth:/opt/qr-rest# sed -n '1,40p' /opt/qr-rest/public_html/saas.php
+<?php
+/**
+ * SaaS landing page: hero, features, lead form (POST to /api/lead_request.php).
+ */
+
+$rid = bin2hex(random_bytes(4));
+require_once __DIR__ . '/../app/bootstrap.php';
+set_exception_handler(function (Throwable $e) use ($rid) {
+    error_log('STABILITY_ERROR saas.php rid=' . $rid . ' ' . $e->getMessage());
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
+    echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ошибка</title></head><body><p>Что-то пошло не так. Попробуйте позже.</p><p style="font-size:11px;color:#666">RID: ' . htmlspecialchars($rid) . '</p></body></html>';
+    exit;
+});
+
+if (!function_exists('e')) {
+    function e($v): string {
+        return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+$config = require __DIR__ . '/../app/config.php';
+$mainDomain = $config['app']['main_domain'] ?? 'lvh.me';
+$protocol   = $config['app']['protocol'] ?? 'http';
+$demoUrl    = $protocol . '://demo.' . $mainDomain . '/qr.php?table_id=1';
+$demoDashboardUrl = $protocol . '://demo.' . $mainDomain . '/restaurant/dashboard.php';
+
+$formSuccess = false;
+$formError   = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['lead_submit'])) {
+    $name            = trim((string)($_POST['name'] ?? ''));
+    $restaurant_name = trim((string)($_POST['restaurant_name'] ?? ''));
+    $phone           = trim((string)($_POST['phone'] ?? ''));
+    $city            = trim((string)($_POST['city'] ?? ''));
+
+    if ($name !== '' || $phone !== '' || $restaurant_name !== '' || $city !== '') {
+        $ch = curl_init($protocol . '://' . ($_SERVER['HTTP_HOST'] ?? $mainDomain) . '/api/lead_request.php');
+        if ($ch) {
+root@aboveamaranth:/opt/qr-rest# sed -n '1,40p' /opt/qr-rest/public_html/saas.php
+<?php
+/**
+ * SaaS landing page: hero, features, lead form (POST to /api/lead_request.php).
+ */
+
+$rid = bin2hex(random_bytes(4));
+require_once __DIR__ . '/../app/bootstrap.php';
+set_exception_handler(function (Throwable $e) use ($rid) {
+    error_log('STABILITY_ERROR saas.php rid=' . $rid . ' ' . $e->getMessage());
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
+    echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ошибка</title></head><body><p>Что-то пошло не так. Попробуйте позже.</p><p style="font-size:11px;color:#666">RID: ' . htmlspecialchars($rid) . '</p></body></html>';
+    exit;
+});
+
+if (!function_exists('e')) {
+    function e($v): string {
+        return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+$config = require __DIR__ . '/../app/config.php';
+$mainDomain = $config['app']['main_domain'] ?? 'lvh.me';
+$protocol   = $config['app']['protocol'] ?? 'http';
+$demoUrl    = $protocol . '://demo.' . $mainDomain . '/qr.php?table_id=1';
+$demoDashboardUrl = $protocol . '://demo.' . $mainDomain . '/restaurant/dashboard.php';
+
+$formSuccess = false;
+$formError   = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['lead_submit'])) {
+    $name            = trim((string)($_POST['name'] ?? ''));
+    $restaurant_name = trim((string)($_POST['restaurant_name'] ?? ''));
+    $phone           = trim((string)($_POST['phone'] ?? ''));
+    $city            = trim((string)($_POST['city'] ?? ''));
+
+    if ($name !== '' || $phone !== '' || $restaurant_name !== '' || $city !== '') {
+        $ch = curl_init($protocol . '://' . ($_SERVER['HTTP_HOST'] ?? $mainDomain) . '/api/lead_request.php');
+        if ($ch) {
+root@aboveamaranth:/opt/qr-rest# sed -n '1,40p' /opt/qr-rest/public_html/saas.php
+<?php
+/**
+ * SaaS landing page: hero, features, lead form (POST to /api/lead_request.php).
+ */
+
+$rid = bin2hex(random_bytes(4));
+require_once __DIR__ . '/../app/bootstrap.php';
+set_exception_handler(function (Throwable $e) use ($rid) {
+    error_log('STABILITY_ERROR saas.php rid=' . $rid . ' ' . $e->getMessage());
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
+    echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ошибка</title></head><body><p>Что-то пошло не так. Попробуйте позже.</p><p style="font-size:11px;color:#666">RID: ' . htmlspecialchars($rid) . '</p></body></html>';
+    exit;
+});
+
+if (!function_exists('e')) {
+    function e($v): string {
+        return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+$config = require __DIR__ . '/../app/config.php';
+$mainDomain = $config['app']['main_domain'] ?? 'lvh.me';
+$protocol   = $config['app']['protocol'] ?? 'http';
+$demoUrl    = $protocol . '://demo.' . $mainDomain . '/qr.php?table_id=1';
+$demoDashboardUrl = $protocol . '://demo.' . $mainDomain . '/restaurant/dashboard.php';
+
+$formSuccess = false;
+$formError   = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['lead_submit'])) {
+    $name            = trim((string)($_POST['name'] ?? ''));
+    $restaurant_name = trim((string)($_POST['restaurant_name'] ?? ''));
+    $phone           = trim((string)($_POST['phone'] ?? ''));
+    $city            = trim((string)($_POST['city'] ?? ''));
+
+    if ($name !== '' || $phone !== '' || $restaurant_name !== '' || $city !== '') {
+        $ch = curl_init($protocol . '://' . ($_SERVER['HTTP_HOST'] ?? $mainDomain) . '/api/lead_request.php');
+        if ($ch) {
+root@aboveamaranth:/opt/qr-rest# sed -n '1,40p' /opt/qr-rest/public_html/saas.php
+<?php
+/**
+ * SaaS landing page: hero, features, lead form (POST to /api/lead_request.php).
+ */
+
+$rid = bin2hex(random_bytes(4));
+require_once __DIR__ . '/../app/bootstrap.php';
+set_exception_handler(function (Throwable $e) use ($rid) {
+    error_log('STABILITY_ERROR saas.php rid=' . $rid . ' ' . $e->getMessage());
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
+    echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ошибка</title></head><body><p>Что-то пошло не так. Попробуйте позже.</p><p style="font-size:11px;color:#666">RID: ' . htmlspecialchars($rid) . '</p></body></html>';
+    exit;
+});
+
+if (!function_exists('e')) {
+    function e($v): string {
+        return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+$config = require __DIR__ . '/../app/config.php';
+$mainDomain = $config['app']['main_domain'] ?? 'lvh.me';
+$protocol   = $config['app']['protocol'] ?? 'http';
+$demoUrl    = $protocol . '://demo.' . $mainDomain . '/qr.php?table_id=1';
+$demoDashboardUrl = $protocol . '://demo.' . $mainDomain . '/restaurant/dashboard.php';
+
+$formSuccess = false;
+$formError   = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['lead_submit'])) {
+    $name            = trim((string)($_POST['name'] ?? ''));
+    $restaurant_name = trim((string)($_POST['restaurant_name'] ?? ''));
+    $phone           = trim((string)($_POST['phone'] ?? ''));
+    $city            = trim((string)($_POST['city'] ?? ''));
+
+    if ($name !== '' || $phone !== '' || $restaurant_name !== '' || $city !== '') {
+        $ch = curl_init($protocol . '://' . ($_SERVER['HTTP_HOST'] ?? $mainDomain) . '/api/lead_request.php');
+        if ($ch) {
+root@aboveamaranth:/opt/qr-rest# python3 - <<'PY'
+from pathlib import Path
+
+p = Path('/opt/qr-rest/public_html/saas.php')
+text = p.read_text()
+
+needle = "require_once __DIR__ . '/../app/bootstrap.php';"
+insert = """require_once __DIR__ . '/../app/bootstrap.php';
+
+if (!defined('BRAND_NAME')) {
+    define('BRAND_NAME', 'QR Rest');
+}
+if (!defined('BRAND_NAME_FULL')) {
+    define('BRAND_NAME_FULL', 'QR Rest');
+}"""
+
+if needle in text and "define('BRAND_NAME_FULL'" not in text:
+    text = text.replace(needle, insert, 1)
+    p.write_text(text)
+    print('UPDATED')
+else:
+    print('SKIPPED')
+PY
+UPDATED
+root@aboveamaranth:/opt/qr-rest# docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/saas.php
+No syntax errors detected in /var/www/html/public_html/saas.php
+root@aboveamaranth:/opt/qr-rest# cd /opt/qr-rest
+docker-compose --env-file .env.production -f docker-compose.prod.yml restart app
+Restarting qr-rest_app_1 ... done
+root@aboveamaranth:/opt/qr-rest# docker logs qr-rest_app_1 2>&1 | grep 0aeed08cbe3e1fc8
+[Tue Mar 31 19:34:17.469434 2026] [php:notice] [pid 17:tid 17] [client 172.18.0.4:55432] STABILITY_ERROR saas.php rid=0aeed08cbe3e1fc8 Call to undefined function brand_head_tags()
+root@aboveamaranth:/opt/qr-rest# 
+root@aboveamaranth:/opt/qr-rest# docker logs qr-rest_app_1 --tail=80
+127.0.0.1 - - [31/Mar/2026:19:24:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:25:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+[Tue Mar 31 19:25:48.626730 2026] [mpm_prefork:notice] [pid 1:tid 1] AH00170: caught SIGWINCH, shutting down gracefully
+AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 172.18.0.3. Set the 'ServerName' directive globally to suppress this message
+AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 172.18.0.3. Set the 'ServerName' directive globally to suppress this message
+[Tue Mar 31 19:25:49.819039 2026] [mpm_prefork:notice] [pid 1:tid 1] AH00163: Apache/2.4.66 (Debian) PHP/8.2.30 configured -- resuming normal operations
+[Tue Mar 31 19:25:49.819187 2026] [core:notice] [pid 1:tid 1] AH00094: Command line: 'apache2 -D FOREGROUND'
+172.18.0.4 - - [31/Mar/2026:19:26:08 +0000] "GET /staff/floorplan.php?status=1 HTTP/1.1" 200 759 "https://test.qrrest-menu.ru/staff/floorplan.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:16 +0000] "GET /staff/floorplan.php?status=1 HTTP/1.1" 200 759 "https://test.qrrest-menu.ru/staff/floorplan.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+[Tue Mar 31 19:26:17.103218 2026] [php:notice] [pid 18:tid 18] [client 172.18.0.4:56574] STABILITY_ERROR {"timestamp":"2026-03-31T19:26:17Z","level":"error","user_id":1,"uri":"\\/restaurant\\/dashboard.php","error_type":"PHP Error","message":"Undefined variable $obComplete","file":"\\/var\\/www\\/html\\/public_html\\/restaurant\\/dashboard.php","line":865,"rid":"5fc0362cbf32bd82"}, referer: https://test.qrrest-menu.ru/login.php?redirect=%2Fstaff%2Fkitchen.php
+172.18.0.4 - - [31/Mar/2026:19:26:17 +0000] "GET /restaurant/dashboard.php HTTP/1.1" 200 11651 "https://test.qrrest-menu.ru/login.php?redirect=%2Fstaff%2Fkitchen.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:26:19 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:26:20 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:21 +0000] "GET /staff/orders.php HTTP/1.1" 200 6859 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:21 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:21 +0000] "GET /assets/new-order.mp3 HTTP/1.1" 404 482 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:23 +0000] "GET /staff/floorplan.php HTTP/1.1" 200 6318 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:26 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:31 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:32 +0000] "GET /staff/floorplan.php?status=1 HTTP/1.1" 200 759 "https://test.qrrest-menu.ru/staff/floorplan.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:36 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:40 +0000] "GET /staff/floorplan.php?status=1 HTTP/1.1" 200 759 "https://test.qrrest-menu.ru/staff/floorplan.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:41 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:46 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:48 +0000] "GET /staff/floorplan.php?status=1 HTTP/1.1" 200 759 "https://test.qrrest-menu.ru/staff/floorplan.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+[Tue Mar 31 19:26:49.613848 2026] [php:notice] [pid 21:tid 21] [client 172.18.0.4:50700] STABILITY_ERROR saas.php rid=559d625c5bad0b86 Undefined constant "BRAND_NAME_FULL"
+172.18.0.4 - - [31/Mar/2026:19:26:49 +0000] "GET /saas.php HTTP/1.1" 200 1030 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:26:49 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:26:51 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:26:56 +0000] "GET /staff/floorplan.php?status=1 HTTP/1.1" 200 759 "https://test.qrrest-menu.ru/staff/floorplan.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:27:03 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:27:08 +0000] "GET /staff/kitchen.php HTTP/1.1" 200 3876 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:27:08 +0000] "GET /staff/kitchen_api.php HTTP/1.1" 200 1822 "https://test.qrrest-menu.ru/staff/kitchen.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:27:09 +0000] "GET /assets/new-order.mp3 HTTP/1.1" 404 482 "https://test.qrrest-menu.ru/staff/kitchen.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:27:14 +0000] "GET /staff/kitchen_api.php HTTP/1.1" 200 1822 "https://test.qrrest-menu.ru/staff/kitchen.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:27:14 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:27:19 +0000] "GET /staff/kitchen_api.php HTTP/1.1" 200 1822 "https://test.qrrest-menu.ru/staff/kitchen.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:27:19 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:27:24 +0000] "GET /staff/kitchen_api.php HTTP/1.1" 200 1822 "https://test.qrrest-menu.ru/staff/kitchen.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:27:29 +0000] "GET /staff/kitchen_api.php HTTP/1.1" 200 1822 "https://test.qrrest-menu.ru/staff/kitchen.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:27:29 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:27:34 +0000] "GET /staff/kitchen_api.php HTTP/1.1" 200 1822 "https://test.qrrest-menu.ru/staff/kitchen.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:27:39 +0000] "GET /staff/kitchen_api.php HTTP/1.1" 200 1822 "https://test.qrrest-menu.ru/staff/kitchen.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:27:49 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:28:14 +0000] "GET /restaurant/crm.php HTTP/1.1" 200 3379 "https://test.qrrest-menu.ru/restaurant/dashboard.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:28:16 +0000] "GET /owner/billing.php HTTP/1.1" 200 407 "https://test.qrrest-menu.ru/restaurant/crm.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:28:19 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:28:19 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:28:23 +0000] "GET /restaurant/crm.php HTTP/1.1" 200 3379 "https://test.qrrest-menu.ru/restaurant/dashboard.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+[Tue Mar 31 19:28:26.268057 2026] [php:notice] [pid 21:tid 21] [client 172.18.0.4:59956] STABILITY_ERROR {"timestamp":"2026-03-31T19:28:26Z","level":"exception","user_id":1,"uri":"\\/restaurant\\/settings.php","error_type":"PDOException","message":"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'deleted_at' in 'where clause'","file":"\\/var\\/www\\/html\\/public_html\\/restaurant\\/settings.php","line":47,"rid":"3b6449ff3bc6b82b"}, referer: https://test.qrrest-menu.ru/restaurant/crm.php
+172.18.0.4 - - [31/Mar/2026:19:28:26 +0000] "GET /restaurant/settings.php HTTP/1.1" 500 845 "https://test.qrrest-menu.ru/restaurant/crm.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:28:29 +0000] "GET /restaurant/crm.php HTTP/1.1" 200 3379 "https://test.qrrest-menu.ru/restaurant/dashboard.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:28:49 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:29:19 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:29:21 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:29:50 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:30:20 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:30:43 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:30:50 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:31:20 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:31:50 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:32:20 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:32:41 +0000] "GET / HTTP/1.1" 200 7982 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
+127.0.0.1 - - [31/Mar/2026:19:32:50 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:33:05 +0000] "GET /.env HTTP/1.1" 404 477 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+127.0.0.1 - - [31/Mar/2026:19:33:20 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:33:29 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:33:50 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+[Tue Mar 31 19:33:53.395306 2026] [mpm_prefork:notice] [pid 1:tid 1] AH00170: caught SIGWINCH, shutting down gracefully
+AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 172.18.0.3. Set the 'ServerName' directive globally to suppress this message
+AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 172.18.0.3. Set the 'ServerName' directive globally to suppress this message
+[Tue Mar 31 19:33:54.599298 2026] [mpm_prefork:notice] [pid 1:tid 1] AH00163: Apache/2.4.66 (Debian) PHP/8.2.30 configured -- resuming normal operations
+[Tue Mar 31 19:33:54.600575 2026] [core:notice] [pid 1:tid 1] AH00094: Command line: 'apache2 -D FOREGROUND'
+[Tue Mar 31 19:34:14.072578 2026] [php:notice] [pid 17:tid 17] [client 172.18.0.4:55432] STABILITY_ERROR saas.php rid=354e1b671d05ce8f Call to undefined function brand_head_tags()
+172.18.0.4 - - [31/Mar/2026:19:34:14 +0000] "GET /saas.php HTTP/1.1" 200 1078 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+[Tue Mar 31 19:34:17.469434 2026] [php:notice] [pid 17:tid 17] [client 172.18.0.4:55432] STABILITY_ERROR saas.php rid=0aeed08cbe3e1fc8 Call to undefined function brand_head_tags()
+172.18.0.4 - - [31/Mar/2026:19:34:17 +0000] "GET /saas.php HTTP/1.1" 200 1076 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:34:24 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:34:54 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:35:24 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+root@aboveamaranth:/opt/qr-rest# sed -n '1,30p' /opt/qr-rest/public_html/saas.php
+<?php
+/**
+ * SaaS landing page: hero, features, lead form (POST to /api/lead_request.php).
+ */
+
+$rid = bin2hex(random_bytes(4));
+require_once __DIR__ . '/../app/bootstrap.php';
+
+if (!defined('BRAND_NAME')) {
+    define('BRAND_NAME', 'QR Rest');
+}
+if (!defined('BRAND_NAME_FULL')) {
+    define('BRAND_NAME_FULL', 'QR Rest');
+}
+set_exception_handler(function (Throwable $e) use ($rid) {
+    error_log('STABILITY_ERROR saas.php rid=' . $rid . ' ' . $e->getMessage());
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
+    echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ошибка</title></head><body><p>Что-то пошло не так. Попробуйте позже.</p><p style="font-size:11px;color:#666">RID: ' . htmlspecialchars($rid) . '</p></body></html>';
+    exit;
+});
+
+if (!function_exists('e')) {
+    function e($v): string {
+        return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+$config = require __DIR__ . '/../app/config.php';
+root@aboveamaranth:/opt/qr-rest# docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/saas.php
+No syntax errors detected in /var/www/html/public_html/saas.php
+root@aboveamaranth:/opt/qr-rest# grep -n "brand_head_tags" /opt/qr-rest/public_html/saas.php
+82:    <?= brand_head_tags() ?>
+root@aboveamaranth:/opt/qr-rest# grep -R "function brand_head_tags" -n /opt/qr-rest
+root@aboveamaranth:/opt/qr-rest# docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/saas.php
+docker-compose --env-file .env.production -f docker-compose.prod.yml restart app
+No syntax errors detected in /var/www/html/public_html/saas.php
+Restarting qr-rest_app_1 ... done
+root@aboveamaranth:/opt/qr-rest# docker logs qr-rest_app_1 --tail=50
+127.0.0.1 - - [31/Mar/2026:19:29:50 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:30:20 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:30:43 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:30:50 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:31:20 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:31:50 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:32:20 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:32:41 +0000] "GET / HTTP/1.1" 200 7982 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
+127.0.0.1 - - [31/Mar/2026:19:32:50 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:33:05 +0000] "GET /.env HTTP/1.1" 404 477 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+127.0.0.1 - - [31/Mar/2026:19:33:20 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:33:29 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:33:50 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+[Tue Mar 31 19:33:53.395306 2026] [mpm_prefork:notice] [pid 1:tid 1] AH00170: caught SIGWINCH, shutting down gracefully
+AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 172.18.0.3. Set the 'ServerName' directive globally to suppress this message
+AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 172.18.0.3. Set the 'ServerName' directive globally to suppress this message
+[Tue Mar 31 19:33:54.599298 2026] [mpm_prefork:notice] [pid 1:tid 1] AH00163: Apache/2.4.66 (Debian) PHP/8.2.30 configured -- resuming normal operations
+[Tue Mar 31 19:33:54.600575 2026] [core:notice] [pid 1:tid 1] AH00094: Command line: 'apache2 -D FOREGROUND'
+[Tue Mar 31 19:34:14.072578 2026] [php:notice] [pid 17:tid 17] [client 172.18.0.4:55432] STABILITY_ERROR saas.php rid=354e1b671d05ce8f Call to undefined function brand_head_tags()
+172.18.0.4 - - [31/Mar/2026:19:34:14 +0000] "GET /saas.php HTTP/1.1" 200 1078 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+[Tue Mar 31 19:34:17.469434 2026] [php:notice] [pid 17:tid 17] [client 172.18.0.4:55432] STABILITY_ERROR saas.php rid=0aeed08cbe3e1fc8 Call to undefined function brand_head_tags()
+172.18.0.4 - - [31/Mar/2026:19:34:17 +0000] "GET /saas.php HTTP/1.1" 200 1076 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:34:24 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:34:54 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:35:24 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:35:54 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:36:24 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:36:54 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:37:24 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:37:34 +0000] "GET / HTTP/1.1" 200 7982 "http://178.159.94.192/" "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.6312.86 Safari/537.36 BitSightBot/1.0"
+127.0.0.1 - - [31/Mar/2026:19:37:54 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:38:04 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:38:24 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:38:54 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:39:09 +0000] "GET /.git/config HTTP/1.1" 404 477 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.2"
+127.0.0.1 - - [31/Mar/2026:19:39:24 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:39:54 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:40:24 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:40:55 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:41:25 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:41:55 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+[Tue Mar 31 19:42:10.715623 2026] [mpm_prefork:notice] [pid 1:tid 1] AH00170: caught SIGWINCH, shutting down gracefully
+AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 172.18.0.3. Set the 'ServerName' directive globally to suppress this message
+AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 172.18.0.3. Set the 'ServerName' directive globally to suppress this message
+[Tue Mar 31 19:42:11.907689 2026] [mpm_prefork:notice] [pid 1:tid 1] AH00163: Apache/2.4.66 (Debian) PHP/8.2.30 configured -- resuming normal operations
+[Tue Mar 31 19:42:11.908577 2026] [core:notice] [pid 1:tid 1] AH00094: Command line: 'apache2 -D FOREGROUND'
+[Tue Mar 31 19:42:19.411123 2026] [php:notice] [pid 17:tid 17] [client 172.18.0.4:43344] STABILITY_ERROR saas.php rid=7097614a40f774eb Call to undefined function brand_head_tags()
+172.18.0.4 - - [31/Mar/2026:19:42:19 +0000] "GET /saas.php HTTP/1.1" 200 1078 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:42:21 +0000] "GET /saas.php HTTP/1.1" 200 1077 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+[Tue Mar 31 19:42:21.812951 2026] [php:notice] [pid 17:tid 17] [client 172.18.0.4:43344] STABILITY_ERROR saas.php rid=0da1ee4ddff8b70b Call to undefined function brand_head_tags()
+root@aboveamaranth:/opt/qr-rest# grep -n "brand_head_tags" /opt/qr-rest/public_html/saas.php
+82:    <?= brand_head_tags() ?>
+root@aboveamaranth:/opt/qr-rest# python3 - <<'PY'
+from pathlib import Path
+
+p = Path('/opt/qr-rest/public_html/saas.php')
+text = p.read_text()
+
+marker = """if (!defined('BRAND_NAME_FULL')) {
+    define('BRAND_NAME_FULL', 'QR Rest');
+}"""
+
+stub = """
+if (!function_exists('brand_head_tags')) {
+    function brand_head_tags(): string {
+        return '';
+    }
+}
+"""
+
+if "function brand_head_tags()" not in text:
+    text = text.replace(marker, marker + stub, 1)
+    p.write_text(text)
+    print("UPDATED")
+else:
+    print("ALREADY_PRESENT")
+PY
+UPDATED
+root@aboveamaranth:/opt/qr-rest# sed -n '1,35p' /opt/qr-rest/public_html/saas.php
+<?php
+/**
+ * SaaS landing page: hero, features, lead form (POST to /api/lead_request.php).
+ */
+
+$rid = bin2hex(random_bytes(4));
+require_once __DIR__ . '/../app/bootstrap.php';
+
+if (!defined('BRAND_NAME')) {
+    define('BRAND_NAME', 'QR Rest');
+}
+if (!defined('BRAND_NAME_FULL')) {
+    define('BRAND_NAME_FULL', 'QR Rest');
+}
+if (!function_exists('brand_head_tags')) {
+    function brand_head_tags(): string {
+        return '';
+    }
+}
+
+set_exception_handler(function (Throwable $e) use ($rid) {
+    error_log('STABILITY_ERROR saas.php rid=' . $rid . ' ' . $e->getMessage());
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
+    echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ошибка</title></head><body><p>Что-то пошло не так. Попробуйте позже.</p><p style="font-size:11px;color:#666">RID: ' . htmlspecialchars($rid) . '</p></body></html>';
+    exit;
+});
+
+if (!function_exists('e')) {
+    function e($v): string {
+        return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+root@aboveamaranth:/opt/qr-rest# grep -n "brand_head_tags" /opt/qr-rest/public_html/saas.php
+15:if (!function_exists('brand_head_tags')) {
+16:    function brand_head_tags(): string {
+88:    <?= brand_head_tags() ?>
+root@aboveamaranth:/opt/qr-rest# python3 - <<'PY'
+from pathlib import Path
+
+p = Path('/opt/qr-rest/public_html/saas.php')
+text = p.read_text()
+
+marker = """if (!defined('BRAND_NAME_FULL')) {
+    define('BRAND_NAME_FULL', 'QR Rest');
+}"""
+
+stub = """
+if (!function_exists('brand_head_tags')) {
+    function brand_head_tags(): string {
+        return '';
+    }
+}
+"""
+
+if "function brand_head_tags()" not in text:
+    text = text.replace(marker, marker + stub, 1)
+    p.write_text(text)
+    print("UPDATED")
+else:
+    print("ALREADY_PRESENT")
+PY
+ALREADY_PRESENT
+root@aboveamaranth:/opt/qr-rest# sed -n '1,35p' /opt/qr-rest/public_html/saas.php
+<?php
+/**
+ * SaaS landing page: hero, features, lead form (POST to /api/lead_request.php).
+ */
+
+$rid = bin2hex(random_bytes(4));
+require_once __DIR__ . '/../app/bootstrap.php';
+
+if (!defined('BRAND_NAME')) {
+    define('BRAND_NAME', 'QR Rest');
+}
+if (!defined('BRAND_NAME_FULL')) {
+    define('BRAND_NAME_FULL', 'QR Rest');
+}
+if (!function_exists('brand_head_tags')) {
+    function brand_head_tags(): string {
+        return '';
+    }
+}
+
+set_exception_handler(function (Throwable $e) use ($rid) {
+    error_log('STABILITY_ERROR saas.php rid=' . $rid . ' ' . $e->getMessage());
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
+    echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ошибка</title></head><body><p>Что-то пошло не так. Попробуйте позже.</p><p style="font-size:11px;color:#666">RID: ' . htmlspecialchars($rid) . '</p></body></html>';
+    exit;
+});
+
+if (!function_exists('e')) {
+    function e($v): string {
+        return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+root@aboveamaranth:/opt/qr-rest# docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/saas.php
+cd /opt/qr-rest
+docker-compose --env-file .env.production -f docker-compose.prod.yml restart app
+No syntax errors detected in /var/www/html/public_html/saas.php
+Restarting qr-rest_app_1 ... done
+root@aboveamaranth:/opt/qr-rest# docker logs qr-rest_app_1 --tail=30
+172.18.0.4 - - [31/Mar/2026:19:44:22 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:44:23 +0000] "GET /wordpress/wp-admin/setup-config.php HTTP/1.1" 404 477 "-" "https://qrrest-menu.ru/wordpress/wp-admin/setup-config.php"
+127.0.0.1 - - [31/Mar/2026:19:44:42 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:44:50 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:44:51 +0000] "GET /staff/floorplan.php?status=1 HTTP/1.1" 200 759 "https://test.qrrest-menu.ru/staff/floorplan.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:44:53 +0000] "GET /staff/kitchen_api.php HTTP/1.1" 200 1822 "https://test.qrrest-menu.ru/staff/kitchen.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:44:55 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:44:58 +0000] "GET /staff/kitchen_api.php HTTP/1.1" 200 1822 "https://test.qrrest-menu.ru/staff/kitchen.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:44:59 +0000] "GET /staff/floorplan.php?status=1 HTTP/1.1" 200 759 "https://test.qrrest-menu.ru/staff/floorplan.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:45:01 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:45:05 +0000] "GET /staff/kitchen_api.php HTTP/1.1" 200 1822 "https://test.qrrest-menu.ru/staff/kitchen.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:45:11 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:45:12 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:45:24 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+172.18.0.4 - - [31/Mar/2026:19:45:41 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:45:42 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:46:01 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+[Tue Mar 31 19:46:10.283531 2026] [mpm_prefork:notice] [pid 1:tid 1] AH00170: caught SIGWINCH, shutting down gracefully
+AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 172.18.0.3. Set the 'ServerName' directive globally to suppress this message
+AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 172.18.0.3. Set the 'ServerName' directive globally to suppress this message
+[Tue Mar 31 19:46:11.483927 2026] [mpm_prefork:notice] [pid 1:tid 1] AH00163: Apache/2.4.66 (Debian) PHP/8.2.30 configured -- resuming normal operations
+[Tue Mar 31 19:46:11.484132 2026] [core:notice] [pid 1:tid 1] AH00094: Command line: 'apache2 -D FOREGROUND'
+172.18.0.4 - - [31/Mar/2026:19:46:20 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:46:41 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:47:11 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:47:31 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:47:41 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:48:11 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:48:11 +0000] "GET /saas.php HTTP/1.1" 200 1779 "-" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+[Tue Mar 31 19:48:11.909511 2026] [php:notice] [pid 17:tid 17] [client 172.18.0.4:34206] STABILITY_ERROR saas.php rid=809e450e30654e5b Call to undefined function brand_header_cluster_html()
+root@aboveamaranth:/opt/qr-rest# cd /opt/qr-rest
+grep -n "brand_" /opt/qr-rest/public_html/saas.php
+15:if (!function_exists('brand_head_tags')) {
+16:    function brand_head_tags(): string {
+88:    <?= brand_head_tags() ?>
+111:            <?= brand_header_cluster_html(true, 'w-8 h-8 text-slate-400') ?>
+root@aboveamaranth:/opt/qr-rest# grep -R "function brand_" -n /opt/qr-rest
+/opt/qr-rest/public_html/restaurant/settings.php:72:    function brand_normalize_hex_color(string $v): ?string
+/opt/qr-rest/public_html/restaurant/settings.php:86:    function brand_normalize_asset_url(string $v): ?string
+/opt/qr-rest/public_html/restaurant/settings.php:113:    function brand_delete_storage_file_if_allowed(?string $relativePath): void
+/opt/qr-rest/public_html/restaurant/settings.php:145:    function brand_upload_asset_file(array $file, string $subdir): ?string
+/opt/qr-rest/public_html/saas.php:16:    function brand_head_tags(): string {
+root@aboveamaranth:/opt/qr-rest# sed -n '100,125p' /opt/qr-rest/public_html/saas.php
+        @keyframes heroGradientSlow { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+        .product-card-gradient { background: linear-gradient(145deg, rgba(99,102,241,0.12) 0%, rgba(34,197,94,0.06) 50%, transparent 100%); animation: productGlow 8s ease-in-out infinite; }
+        @keyframes productGlow { 0%, 100% { opacity: 1; } 50% { opacity: 0.85; } }
+    </style>
+</head>
+<body class="min-h-screen text-gray-300 antialiased" style="background-color: #0B0F19;">
+<div class="min-h-screen gradient-mesh hero-gradient hero-gradient-slow">
+
+    <!-- Sticky glass header -->
+    <header id="saas-header" class="sticky-glass-header">
+        <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+            <?= brand_header_cluster_html(true, 'w-8 h-8 text-slate-400') ?>
+            <nav class="flex items-center gap-4">
+                <a href="<?= e($demoDashboardUrl) ?>" target="_blank" rel="noopener" class="text-sm text-gray-400 hover:text-[#F3F4F6] transition-colors">Демо</a>
+                <a href="/login.php" class="text-sm text-gray-400 hover:text-[#F3F4F6] transition-colors">Войти</a>
+                <a href="/signup.php" class="btn-motion inline-flex items-center px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm">Начать бесплатный период</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- 1. Hero: two columns -->
+    <section class="max-w-6xl mx-auto px-4 pt-16 pb-20 md:pt-24 md:pb-28">
+        <div class="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+            <div class="reveal">
+                <h1 class="text-4xl md:text-5xl lg:text-6xl font-semibold tracking-tight text-[#F3F4F6] mb-6 leading-tight">
+                    Управляйте рестораном: QR-меню, допродажи и CRM гостей.
+root@aboveamaranth:/opt/qr-rest# python3 - <<'PY'
+from pathlib import Path
+
+p = Path('/opt/qr-rest/public_html/saas.php')
+text = p.read_text()
+
+old = "            <?= brand_header_cluster_html(true, 'w-8 h-8 text-slate-400') ?>"
+new = """            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-2xl bg-emerald-500/15 border border-emerald-400/30 flex items-center justify-center text-slate-200 text-sm font-bold">
+                    QR
+                </div>
+                <div>
+                    <div class="text-sm font-semibold text-white"><?= e(BRAND_NAME_FULL) ?></div>
+                    <div class="text-xs text-slate-400">Цифровые меню и заказы</div>
+                </div>
+            </div>"""
+
+if old in text:
+    text = text.replace(old, new, 1)
+    p.write_text(text)
+    print("UPDATED")
+else:
+    print("NOT FOUND")
+PY
+UPDATED
+root@aboveamaranth:/opt/qr-rest# docker exec -it qr-rest_app_1 php -l /var/www/html/public_html/saas.php
+docker-compose --env-file .env.production -f docker-compose.prod.yml restart app
+docker logs qr-rest_app_1 --tail=20
+No syntax errors detected in /var/www/html/public_html/saas.php
+Restarting qr-rest_app_1 ... done
+[Tue Mar 31 19:48:11.909511 2026] [php:notice] [pid 17:tid 17] [client 172.18.0.4:34206] STABILITY_ERROR saas.php rid=809e450e30654e5b Call to undefined function brand_header_cluster_html()
+127.0.0.1 - - [31/Mar/2026:19:48:41 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:49:11 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:49:41 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:49:49 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:50:11 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:50:41 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:51:11 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:51:41 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:52:11 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:52:41 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [31/Mar/2026:19:52:48 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [31/Mar/2026:19:53:11 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:53:41 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [31/Mar/2026:19:54:11 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+[Tue Mar 31 19:54:14.109851 2026] [mpm_prefork:notice] [pid 1:tid 1] AH00170: caught SIGWINCH, shutting down gracefully
+AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 172.18.0.3. Set the 'ServerName' directive globally to suppress this message
+AH00558: apache2: Could not reliably determine the server's fully qualified domain name, using 172.18.0.3. Set the 'ServerName' directive globally to suppress this message
+[Tue Mar 31 19:54:15.308993 2026] [mpm_prefork:notice] [pid 1:tid 1] AH00163: Apache/2.4.66 (Debian) PHP/8.2.30 configured -- resuming normal operations
+[Tue Mar 31 19:54:15.309575 2026] [core:notice] [pid 1:tid 1] AH00094: Command line: 'apache2 -D FOREGROUND'
+root@aboveamaranth:/opt/qr-rest# Read from remote host 178.159.94.192: Connection reset by peer
+Connection to 178.159.94.192 closed.
+client_loop: send disconnect: Broken pipe
+artemdemyanenko@MacBook-Air-Artem qr-rest % cd ~/Documents/qr-rest
+artemdemyanenko@MacBook-Air-Artem qr-rest % touch deploy.sh
+artemdemyanenko@MacBook-Air-Artem qr-rest % code deploy.sh
+zsh: command not found: code
+artemdemyanenko@MacBook-Air-Artem qr-rest % open -e deploy.sh
+artemdemyanenko@MacBook-Air-Artem qr-rest % chmod +x deploy.sh
+artemdemyanenko@MacBook-Air-Artem qr-rest % ./deploy.sh
+❌ Не найден .env.production в /Users/artemdemyanenko/Documents/qr-rest
+artemdemyanenko@MacBook-Air-Artem qr-rest % scp root@ТВОЙ_IP:/opt/qr-rest/.env.production ~/Documents/qr-rest/
+hostname contains invalid characters
+scp: Connection closed
+artemdemyanenko@MacBook-Air-Artem qr-rest % ./deploy.sh
+❌ Не найден .env.production в /Users/artemdemyanenko/Documents/qr-rest
+artemdemyanenko@MacBook-Air-Artem qr-rest % ./deploy.sh
+🚀 Начинаю деплой
+   Локальный проект: /Users/artemdemyanenko/Documents/qr-rest
+   Сервер: root@178.159.94.192
+   Путь на сервере: /opt/qr-rest
+
+🔐 Проверяю SSH...
+./deploy.sh: line 57: SSH_OPTS[@]: unbound variable
+artemdemyanenko@MacBook-Air-Artem qr-rest % ./deploy.sh
+🚀 Начинаю деплой
+   Локальный проект: /Users/artemdemyanenko/Documents/qr-rest
+   Сервер: root@178.159.94.192
+   Путь на сервере: /opt/qr-rest
+
+🔐 Проверяю SSH...
+./deploy.sh: line 59: SSH_OPTS[@]: unbound variable
+artemdemyanenko@MacBook-Air-Artem qr-rest % ./deploy.sh
+🚀 Начинаю деплой
+   Локальный проект: /Users/artemdemyanenko/Documents/qr-rest
+   Сервер: root@178.159.94.192
+   Путь на сервере: /opt/qr-rest
+
+🔐 Проверяю SSH...
+root@178.159.94.192's password: 
+SSH OK:  aboveamaranth.aeza.network
+
+📦 Заливаю файлы через rsync...
+root@178.159.94.192's password: 
+Transfer starting: 1126 files
+deleting .env.production
+deleting .env
+deleting backups/kds_wave1_2026-03-31_21-32/orders_api.php
+deleting backups/kds_wave1_2026-03-31_21-32/order_status.php
+deleting backups/kds_wave1_2026-03-31_21-32/menu_manage.php
+deleting backups/kds_wave1_2026-03-31_21-32/kitchen.php
+deleting backups/kds_wave1_2026-03-31_21-32/floorplan.php
+deleting backups/kds_wave1_2026-03-31_21-32/
+deleting deploy/nginx/certbot/.well-known/acme-challenge/
+deleting deploy/nginx/certbot/.well-known/
+deleting deploy/nginx/certs/privkey.pem
+deleting deploy/nginx/certs/fullchain.pem
+./
+.env.production.example
+DEPLOY_PRODUCTION.md
+DEPLOY_VPS.md
+PRODUCTION_CHECKLIST.md
+SET
+UPDATE
+WHERE
+deploy.sh
+docker-compose.prod.yml
+docker-compose.yml
+app/
+app/ai_copilot.php
+app/bootstrap.php
+app/brand.php
+app/config.php
+app/crm_campaign_repo.php
+app/crm_repo.php
+app/cron_crm_outbox.php
+app/demo.php
+app/env_guard.php
+app/feedback_analytics.php
+app/feedback_crm_bridge.php
+app/feedback_growth_automation.php
+app/feedback_insights.php
+app/flow_id.php
+app/growth_engine_arch.php
+app/guest_retention.php
+app/guest_return_engine.php
+app/helpers.php
+app/kds_helpers.php
+app/logging.php
+app/loyalty_bonus_recommendation.php
+app/loyalty_core.php
+app/loyalty_return_mode.php
+app/menu_intelligence.php
+app/order_feedback_guard.php
+app/owner_analytics.php
+app/restaurant_health.php
+app/restaurant_success.php
+app/retention_analytics.php
+app/revenue_stats.php
+app/themes.php
+app/upsell_analytics.php
+app/upsell_engine.php
+app/upsell_guest.php
+app/upsell_optimization.php
+app/upsell_repo.php
+app/yandex_review_url_validate.php
+app/lib/
+app/lib/phpqrcode/
+app/lib/phpqrcode/bindings/
+app/lib/phpqrcode/bindings/tcpdf/
+app/lib/phpqrcode/cache/
+app/lib/phpqrcode/cache/mask_0/
+app/lib/phpqrcode/cache/mask_1/
+app/lib/phpqrcode/cache/mask_2/
+app/lib/phpqrcode/cache/mask_3/
+app/lib/phpqrcode/cache/mask_4/
+app/lib/phpqrcode/cache/mask_5/
+app/lib/phpqrcode/cache/mask_6/
+app/lib/phpqrcode/cache/mask_7/
+app/lib/phpqrcode/tools/
+app/migrations/
+app/migrations/2026_03_26_upsell_tracking_conversion_indexes.sql
+app/migrations/2026_06_13_growth_feedback_bridge_key.sql
+app/migrations/2026_06_13_menu_items_image_path_guard.sql
+app/migrations/2026_06_13_order_feedback.sql
+app/migrations/2026_06_13_order_feedback_unique_order.sql
+app/migrations/2026_06_13_yandex_review_url.sql
+app/migrations/2026_06_14_loyalty_return_mode_enabled.sql
+app/migrations/2026_06_15_restaurant_crm_settings.sql
+app/migrations/2026_06_16_restaurants_smart_upsell_guest.sql
+app/migrations/2026_06_20_kds_station_status.sql
+backups/
+deploy/nginx/
+deploy/nginx/default.conf
+deploy/nginx/ssl_readme.txt
+deploy/nginx/certbot/
+deploy/nginx/certs/
+docs/
+docs/DEPLOY_HTTPS.md
+public_html/
+public_html/checkout.php
+public_html/favicon.ico
+public_html/favicon.png
+public_html/health.php
+public_html/index.php
+public_html/login.php
+public_html/order_track.php
+public_html/qr.php
+public_html/qr_offers.php
+public_html/saas.php
+public_html/signup.php
+public_html/ajax/
+public_html/ajax/kds_orders.php
+public_html/ajax/kds_update_status.php
+public_html/ajax/order_feedback.php
+public_html/ajax/order_feedback_state.php
+public_html/ajax/order_status.php
+public_html/ajax/upsell_event.php
+public_html/ajax/upsell_suggestions.php
+public_html/assets/
+public_html/assets/brand/
+public_html/assets/brand/apple-touch-icon.png
+public_html/assets/brand/favicon-32.png
+public_html/assets/brand/favicon.svg
+public_html/assets/css/
+public_html/assets/css/brand.css
+public_html/assets/css/motion.css
+public_html/assets/css/polish.css
+public_html/assets/js/command-palette.js
+public_html/assets/js/motion.js
+public_html/assets/js/toast.js
+public_html/guest/
+public_html/guest/order_timer_status.php
+public_html/guest/waiter_call.php
+public_html/loyalty/
+public_html/owner/
+public_html/owner/billing.php
+public_html/project-admin/
+public_html/project-admin/diagnostics.php
+public_html/project-admin/error_view.php
+public_html/project-admin/experiment_results.php
+public_html/project-admin/experiments_dashboard.php
+public_html/project-admin/index.php
+public_html/project-admin/lead_scoring.php
+public_html/project-admin/lead_view.php
+public_html/project-admin/leads.php
+public_html/project-admin/logs.php
+public_html/project-admin/network_dashboard.php
+public_html/project-admin/owner_dashboard.php
+public_html/project-admin/qr_themes.php
+public_html/project-admin/restaurants.php
+public_html/project-admin/saas_dashboard.php
+public_html/project-admin/sales_forecast.php
+public_html/project-admin/transactions.php
+public_html/project-admin/users.php
+public_html/restaurant/
+public_html/restaurant/activate.php
+public_html/restaurant/analytics_upsell.php
+public_html/restaurant/crm.php
+public_html/restaurant/crm_campaigns.php
+public_html/restaurant/dashboard.php
+public_html/restaurant/feedback.php
+public_html/restaurant/floorplan.php
+public_html/restaurant/growth_suggestions.php
+public_html/restaurant/guest_view.php
+public_html/restaurant/import_menu.php
+public_html/restaurant/invite.php
+public_html/restaurant/kitchen.php
+public_html/restaurant/loyalty_settings.php
+public_html/restaurant/menu_categories.php
+public_html/restaurant/menu_items.php
+public_html/restaurant/menu_manage.php
+public_html/restaurant/orders.php
+public_html/restaurant/qr_codes.php
+public_html/restaurant/qr_print.php
+public_html/restaurant/qr_print_pdf.php
+public_html/restaurant/revenue.php
+public_html/restaurant/settings.php
+public_html/restaurant/setup.php
+public_html/restaurant/staff.php
+public_html/restaurant/tables.php
+public_html/restaurant/tables_qr.php
+public_html/restaurant/transactions.php
+public_html/restaurant/upsell_rules.php
+public_html/restaurant/upsells.php
+public_html/staff/
+public_html/staff/dashboard.php
+public_html/staff/floorplan.php
+public_html/staff/floorplan_api.php
+public_html/staff/kds.php
+public_html/staff/kitchen.php
+public_html/staff/kitchen_api.php
+public_html/staff/kitchen_item_update.php
+public_html/staff/order_update_status.php
+public_html/staff/orders.php
+public_html/staff/orders_api.php
+public_html/staff/pos_create_order.php
+public_html/staff/waiter_call_resolve.php
+public_html/staff/waiter_calls_api.php
+public_html/staff/loyalty/
+public_html/uploads/menu/.gitkeep
+scripts/seed_demo.php
+tools/
+tools/generate_brand_pngs.php
+
+sent 235363 bytes  received 26872 bytes  205819 bytes/sec
+total size is 57298659  speedup is 218,50
+
+♻️ Перезапускаю docker-контейнеры...
+root@178.159.94.192's password: 
+Couldn't find env file: /opt/qr-rest/.env.production
+
+📜 Последние логи app:
+root@178.159.94.192's password: 
+172.18.0.4 - - [01/Apr/2026:04:54:16 +0000] "GET //wp2/wp-includes/wlwmanifest.xml HTTP/1.1" 404 482 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36"
+172.18.0.4 - - [01/Apr/2026:04:54:16 +0000] "GET //site/wp-includes/wlwmanifest.xml HTTP/1.1" 404 482 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36"
+172.18.0.4 - - [01/Apr/2026:04:54:17 +0000] "GET //cms/wp-includes/wlwmanifest.xml HTTP/1.1" 404 482 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36"
+172.18.0.4 - - [01/Apr/2026:04:54:17 +0000] "GET //sito/wp-includes/wlwmanifest.xml HTTP/1.1" 404 482 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36"
+127.0.0.1 - - [01/Apr/2026:04:54:20 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:04:54:50 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:04:55:20 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:04:55:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [01/Apr/2026:04:56:16 +0000] "GET /staff/floorplan.php?status=1 HTTP/1.1" 200 759 "https://test.qrrest-menu.ru/staff/floorplan.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [01/Apr/2026:04:56:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:04:56:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:04:57:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:04:57:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:04:58:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:04:58:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:04:59:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:04:59:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:00:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:00:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:01:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:01:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:02:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:02:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [01/Apr/2026:05:02:56 +0000] "GET / HTTP/1.1" 404 840 "-" "Mozilla/5.0 (X11; Linux i686; rv:109.0) Gecko/20100101 Firefox/120.0"
+172.18.0.4 - - [01/Apr/2026:05:03:16 +0000] "GET / HTTP/1.1" 404 840 "-" "Mozilla/5.0 (X11; Linux i686; rv:109.0) Gecko/20100101 Firefox/120.0"
+127.0.0.1 - - [01/Apr/2026:05:03:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [01/Apr/2026:05:03:21 +0000] "GET / HTTP/1.1" 404 840 "-" "Mozilla/5.0 (X11; Linux i686; rv:109.0) Gecko/20100101 Firefox/120.0"
+172.18.0.4 - - [01/Apr/2026:05:03:38 +0000] "GET / HTTP/1.1" 404 840 "-" "Mozilla/5.0 (X11; Linux i686; rv:109.0) Gecko/20100101 Firefox/120.0"
+127.0.0.1 - - [01/Apr/2026:05:03:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:04:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:04:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:05:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:05:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+172.18.0.4 - - [01/Apr/2026:05:06:06 +0000] "GET /staff/orders_api.php HTTP/1.1" 200 1891 "https://test.qrrest-menu.ru/staff/orders.php" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.3.1 Safari/605.1.15"
+127.0.0.1 - - [01/Apr/2026:05:06:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:06:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:07:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:07:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:08:21 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+127.0.0.1 - - [01/Apr/2026:05:08:51 +0000] "GET /health.php HTTP/1.1" 200 512 "-" "curl/8.14.1"
+
+✅ Деплой завершён
+artemdemyanenko@MacBook-Air-Artem qr-rest % cp deploy.sh deploy_old.sh
+artemdemyanenko@MacBook-Air-Artem qr-rest % nano deploy.sh
+artemdemyanenko@MacBook-Air-Artem qr-rest % chmod +x deploy.sh
+artemdemyanenko@MacBook-Air-Artem qr-rest % ./deploy.sh --dry-run
+❌ Не найден .env.production в /Users/artemdemyanenko/Documents/qr-rest
+artemdemyanenko@MacBook-Air-Artem qr-rest % chmod +x deploy.sh
+artemdemyanenko@MacBook-Air-Artem qr-rest % ./deploy.sh --dry-run
+❌ Не найден .env.production в /Users/artemdemyanenko/Documents/qr-rest
+artemdemyanenko@MacBook-Air-Artem qr-rest % cd /Users/artemdemyanenko/Documents/qr-rest
+ls -la
+total 496
+drwxr-xr-x@ 48 artemdemyanenko  staff   1536  1 апр.  09:20 .
+drwx------@ 23 artemdemyanenko  staff    736 30 марта 12:16 ..
+-rw-r--r--@  1 artemdemyanenko  staff  14340 13 марта 11:02 .DS_Store
+-rw-r--r--@  1 artemdemyanenko  staff   1123 29 марта 13:04 .env.production.example
+drwxr-xr-x  98 artemdemyanenko  staff   3136 31 марта 09:10 app
+-rw-r--r--@  1 artemdemyanenko  staff  10243 11 марта 23:14 AUDIT_VARIANT_2_FULL_REPORT.md
+-rw-r--r--   1 artemdemyanenko  staff  20336 27 февр. 12:12 backup_qr_rest_2026-02-27.sql
+-rw-r--r--@  1 artemdemyanenko  staff   3894 18 марта 22:07 BACKUP_RECOVERY.md
+drwxr-xr-x@  3 artemdemyanenko  staff     96 12 марта 07:05 backups
+-rw-r--r--@  1 artemdemyanenko  staff    225 18 марта 22:07 composer.json
+-rw-r--r--@  1 artemdemyanenko  staff   3217 17 марта 08:27 composer.lock
+drwxr-xr-x   3 artemdemyanenko  staff     96 27 февр. 22:19 db
+drwxr-xr-x@  6 artemdemyanenko  staff    192 13 марта 12:20 deploy
+-rwxr-xr-x@  1 artemdemyanenko  staff   1956  1 апр.  09:16 deploy_old.sh
+-rw-r--r--@  1 artemdemyanenko  staff   4499 29 марта 13:06 DEPLOY_PRODUCTION.md
+-rw-r--r--@  1 artemdemyanenko  staff   6635 29 марта 13:05 DEPLOY_VPS.md
+-rwxr-xr-x@  1 artemdemyanenko  staff   7380  1 апр.  09:20 deploy.sh
+-rw-r--r--@  1 artemdemyanenko  staff   2208 29 марта 13:04 docker-compose.prod.yml
+-rw-r--r--@  1 artemdemyanenko  staff   1213 29 марта 12:55 docker-compose.yml
+-rw-r--r--@  1 artemdemyanenko  staff    349 27 февр. 00:41 Dockerfile
+-rw-r--r--@  1 artemdemyanenko  staff    576 27 февр. 12:21 Dockerfile.dockerfile
+drwxr-xr-x@ 15 artemdemyanenko  staff    480 29 марта 12:06 docs
+-rw-r--r--@  1 artemdemyanenko  staff   9486 11 марта 23:14 ENTERPRISE_SAFE_BASELINE_REPORT.md
+-rw-r--r--@  1 artemdemyanenko  staff   7323 17 марта 08:21 FINAL_QA_REPORT.md
+-rw-r--r--@  1 artemdemyanenko  staff    200 13 марта 07:31 Makefile
+-rw-r--r--@  1 artemdemyanenko  staff   3826 22 марта 22:14 MIGRATION_APPLY.md
+-rw-r--r--@  1 artemdemyanenko  staff   8195 13 марта 07:31 PATCH_DEMO_STABILITY.diff
+-rw-r--r--@  1 artemdemyanenko  staff   1802 29 марта 13:06 PRODUCTION_CHECKLIST.md
+-rw-r--r--@  1 artemdemyanenko  staff   5800 11 марта 23:14 PRODUCTION_HARDENING_2.7.md
+drwxr-xr-x  34 artemdemyanenko  staff   1088 29 марта 13:13 public_html
+-rw-r--r--@  1 artemdemyanenko  staff   4292 13 марта 07:31 SCHEMA_GUARD_ACCEPTANCE.md
+drwxr-xr-x  16 artemdemyanenko  staff    512 17 марта 01:16 scripts
+drwxr-xr-x   2 artemdemyanenko  staff     64 28 февр. 13:32 scripts:health.sh
+-rw-r--r--   1 artemdemyanenko  staff      0 27 марта 17:01 SET
+-rw-r--r--@  1 artemdemyanenko  staff   4881 13 марта 07:31 SMOKE_ACCEPTANCE_CHECKLIST.md
+drwxr-xr-x@  5 artemdemyanenko  staff    160 12 марта 19:57 storage
+-rw-r--r--@  1 artemdemyanenko  staff   5121 17 марта 08:21 STRIPE_SETUP.md
+drwxr-xr-x@  3 artemdemyanenko  staff     96 29 марта 13:16 tools
+-rw-r--r--   1 artemdemyanenko  staff      0 27 марта 17:01 UPDATE
+-rw-r--r--@  1 artemdemyanenko  staff   6482 13 марта 07:31 VARIANT1_FINAL_ACCEPTANCE.md
+-rw-r--r--@  1 artemdemyanenko  staff   6916 13 марта 07:31 VARIANT1_FULL_CLOSURE_REPORT.md
+-rw-r--r--@  1 artemdemyanenko  staff   6289 11 марта 23:14 VARIANT1_PERFORMANCE_REPORT.md
+-rw-r--r--@  1 artemdemyanenko  staff   8903 13 марта 07:31 VARIANT4_BILLING_HARDENED.md
+-rw-r--r--@  1 artemdemyanenko  staff   8062 13 марта 07:31 VARIANT4_BILLING_REPORT.md
+-rw-r--r--@  1 artemdemyanenko  staff   9314 13 марта 07:31 VARIANT6_GROWTH_REPORT.md
+-rw-r--r--@  1 artemdemyanenko  staff   6803 13 марта 07:31 VARIANT7_STABILITY_REPORT.md
+drwxr-xr-x@  5 artemdemyanenko  staff    160 17 марта 08:28 vendor
+-rw-r--r--   1 artemdemyanenko  staff      0 27 марта 17:01 WHERE
+artemdemyanenko@MacBook-Air-Artem qr-rest % touch .env.production
+artemdemyanenko@MacBook-Air-Artem qr-rest % ./deploy.sh --dry-run
+🚀 Запуск деплоя
+   Локальный проект: /Users/artemdemyanenko/Documents/qr-rest
+   Сервер: root@178.159.94.192
+   Путь на сервере: /opt/qr-rest
+   Режим: dry-run
+   Удаление лишних файлов на сервере: НЕТ
+   Бэкап: ДА
+
+🔐 Проверяю SSH...
+root@178.159.94.192's password: 
+✅ SSH OK
+
+📁 Готовлю папку на сервере...
+root@178.159.94.192's password: 
+
+🧪 Показываю изменения без заливки...
+root@178.159.94.192's password: 
+Transfer starting: 1128 files
+./
+.env.production
+deploy.sh
+deploy_old.sh
+
+sent 71783 bytes  received 44 bytes  157136 bytes/sec
+total size is 57306039  speedup is 797,83
+
+🎉 Готово
+artemdemyanenko@MacBook-Air-Artem qr-rest % mkdir -p .vscode
+artemdemyanenko@MacBook-Air-Artem qr-rest % nano .vscode/tasks.json
+artemdemyanenko@MacBook-Air-Artem qr-rest % ssh root@178.159.94.192
+cd /opt/qr-rest/public_html
+root@178.159.94.192's password: 
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-48-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Wed Apr  1 10:20:46 AM MSK 2026
+
+  System load:  0.0                Processes:             112
+  Usage of /:   20.3% of 29.44GB   Users logged in:       1
+  Memory usage: 37%                IPv4 address for ens3: 178.159.94.192
+  Swap usage:   0%                 IPv6 address for ens3: 2a12:5940:dcab::2
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+Expanded Security Maintenance for Applications is not enabled.
+
+262 updates can be applied immediately.
+150 of these updates are standard security updates.
+To see these additional updates run: apt list --upgradable
+
+1 additional security update can be applied with ESM Apps.
+Learn more about enabling ESM Apps service at https://ubuntu.com/esm
+
+
+Last login: Tue Mar 31 22:25:44 2026 from 62.183.18.43
+root@aboveamaranth:~# cd /opt/qr-rest/public_html
+root@aboveamaranth:/opt/qr-rest/public_html# ls -la
+total 452
+drwxr-xr-x 13 501 staff  4096 Mar 29 13:13 .
+drwxr-xr-x 13 501 staff  4096 Apr  1 09:23 ..
+drwx------  2 501 staff  4096 Mar 25 00:04 ajax
+drwxr-xr-x  2 501 staff  4096 Mar 12 02:10 api
+drwxr-xr-x  5 501 staff  4096 Mar 29 12:08 assets
+-rw-------  1 501 staff 11236 Mar 29 12:55 checkout.php
+-rw-r--r--  1 501 staff 10244 Mar 12 19:57 .DS_Store
+-rw-------  1 501 staff    24 Dec  1 12:43 enot_582ed530.html
+-rw-------  1 501 staff  6974 Feb 20 10:03 error.php
+-rw-r--r--  1 501 staff   379 Mar 29 13:13 favicon.ico
+-rw-r--r--  1 501 staff   379 Mar 29 13:13 favicon.png
+drwx------  2 501 staff  4096 Mar 30 10:55 guest
+-rw-------  1 501 staff    65 Nov 21 17:04 hash.php
+-rw-r--r--  1 501 staff  4351 Mar 29 13:02 health.php
+-rw-------  1 501 staff 40947 Mar 29 13:14 index.php
+-rw-------  1 501 staff 12294 Feb 20 10:04 lead_request.php
+-rw-------  1 501 staff 16410 Mar 29 13:31 login.php
+-rw-------  1 501 staff   216 Nov 21 15:53 logout.php
+drwx------  2 501 staff  4096 Feb 27 11:07 loyalty
+-rw-------  1 501 staff  9028 Feb 20 09:52 maintenance.php
+-rw-------  1 501 staff 45855 Mar 31 23:29 order_track.php
+drwx------  2 501 staff  4096 Mar 12 02:04 owner
+drwx------  2 501 staff  4096 Mar 25 22:09 project-admin
+-rw-------  1 501 staff  8589 Mar 29 12:55 qr_offers.php
+-rw-------  1 501 staff 97903 Mar 29 13:29 qr.php
+-rw-r--r--  1 501 staff  2222 Mar 17 08:21 ready.php
+drwx------  2 501 staff  4096 Mar 28 22:14 restaurant
+-rw-------  1 501 staff 30197 Mar 18 22:07 restaurant_public.php
+-rw-r--r--  1 501 staff 39746 Mar 31 22:41 saas.php
+-rw-r--r--  1 501 staff 14567 Mar 29 13:16 signup.php
+drwx------  3 501 staff  4096 Mar 31 09:16 staff
+drwxr-xr-x  4 501 staff  4096 Nov 21 15:00 storage
+-rw-r--r--  1 501 staff  2801 Mar 17 08:21 stripe_webhook.php
+drwxr-xr-x  3 501 staff  4096 Mar 17 01:29 uploads
+root@aboveamaranth:/opt/qr-rest/public_html# nano /opt/qr-rest/public_html/.htaccess
+
+  GNU nano 7.2                                         /opt/qr-rest/public_html/.htaccess *                                                
+RewriteEngine On
+
+# Если файл не существует — отправляем на index.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [L]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                             [ Wrote 6 lines ]
+^G Help          ^O Write Out     ^W Where Is      ^K Cut           ^T Execute       ^C Location      M-U Undo         M-A Set Mark
+^X Exit          ^R Read File     ^\ Replace       ^U Paste         ^J Justify       ^/ Go To Line    M-E Redo         M-6 Copy

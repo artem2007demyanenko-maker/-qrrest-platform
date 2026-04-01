@@ -1,0 +1,11 @@
+{
+    "name": "qr-rest/app",
+    "description": "QR menu and restaurant management PHP application",
+    "type": "project",
+    "require": {
+        "php": ">=8.2"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

@@ -1,0 +1,15 @@
+/**
+ * QR Rest — shared branding (loaded via brand_head_tags()).
+ */
+.brand-cluster {
+  align-items: center;
+}
+.brand-wordmark .font-semibold {
+  letter-spacing: -0.02em;
+}
+.brand-sidebar-head h1 {
+  margin: 0;
+}
+.brand-mark svg {
+  display: block;
+}

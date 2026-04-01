@@ -1,0 +1,150 @@
+/* Global motion system - reusable animation classes. GPU-friendly. */
+.fade-in {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.fade-in.visible {
+  opacity: 1;
+  transform: none;
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.6s cubic-bezier(0.22, 0.61, 0.36, 1), transform 0.6s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.reveal.visible {
+  opacity: 1;
+  transform: none;
+}
+
+.page-enter {
+  opacity: 0;
+  animation: pageFadeIn 0.4s ease forwards;
+}
+@keyframes pageFadeIn {
+  to { opacity: 1; }
+}
+
+.btn-motion {
+  transition: transform 150ms ease, box-shadow 150ms ease;
+  transform-origin: center;
+}
+.btn-motion:hover {
+  transform: scale(1.03);
+}
+.btn-motion:active {
+  transform: scale(0.97);
+}
+
+.btn-ripple {
+  position: relative;
+  overflow: hidden;
+}
+.btn-ripple::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at var(--x, 50%) var(--y, 50%), rgba(255,255,255,0.15) 0%, transparent 60%);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+.btn-ripple:active::after {
+  opacity: 1;
+}
+
+.card-motion {
+  transition: transform 200ms ease-out, box-shadow 200ms ease-out;
+}
+.card-motion:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.25), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
+}
+
+.sidebar-nav a {
+  position: relative;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+.sidebar-nav a.sidebar-active {
+  background-color: rgba(99, 102, 241, 0.2);
+  color: rgb(129, 140, 248);
+}
+.sidebar-nav a.sidebar-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: 0 2px 2px 0;
+  background: rgb(99, 102, 241);
+  animation: sidebarAccentIn 0.25s ease;
+}
+@keyframes sidebarAccentIn {
+  from { opacity: 0; transform: translateY(-50%) scaleY(0.5); }
+  to { opacity: 1; transform: translateY(-50%) scaleY(1); }
+}
+
+.table-row-motion {
+  transition: background-color 150ms ease, transform 150ms ease;
+}
+.table-row-motion:hover {
+  background-color: rgba(31, 41, 55, 0.6);
+  transform: scale(1.005);
+  transform-origin: center;
+}
+
+.btn-add-feedback {
+  transition: transform 150ms ease;
+}
+.btn-add-feedback:active {
+  transform: scale(0.92);
+}
+
+.skeleton {
+  background: linear-gradient(90deg, rgba(31, 41, 55, 0.6) 25%, rgba(55, 65, 81, 0.4) 50%, rgba(31, 41, 55, 0.6) 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.2s ease-in-out infinite;
+  border-radius: 0.5rem;
+}
+@keyframes skeletonShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.gradient-animated {
+  background-size: 400% 400%;
+  animation: gradientShift 15s ease infinite;
+}
+@keyframes gradientShift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.empty-state {
+  text-align: center;
+  padding: 2.5rem 1.5rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(55, 65, 81, 0.5);
+  background: rgba(18, 24, 38, 0.5);
+}
+.empty-state-icon {
+  width: 3rem;
+  height: 3rem;
+  margin: 0 auto 1rem;
+  opacity: 0.6;
+}
+.empty-state-title {
+  font-size: 1rem;
+  font-weight: 500;
+  color: rgb(156, 163, 175);
+  margin-bottom: 0.25rem;
+}
+.empty-state-text {
+  font-size: 0.875rem;
+  color: rgb(107, 114, 128);
+  margin-bottom: 1rem;
+}

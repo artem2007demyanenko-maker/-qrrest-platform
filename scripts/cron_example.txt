@@ -1,0 +1,11 @@
+# Cron example for QR Restaurant SaaS
+# Run from project root or set correct path.
+
+# Every 5 minutes — main cron (CRM outbox, optional billing/lead scoring)
+*/5 * * * * cd /var/www/html && php scripts/cron_runner.php >> /var/log/qr_cron.log 2>&1
+
+# Or if app is in /home/app/qr-rest:
+# */5 * * * * cd /home/app/qr-rest && php scripts/cron_runner.php >> /home/app/qr-rest/storage/logs/cron.log 2>&1
+
+# Daily backup (optional; ensure DB_* env are set or use .env)
+# 0 2 * * * /var/www/html/scripts/db_backup.sh >> /var/log/qr_backup.log 2>&1

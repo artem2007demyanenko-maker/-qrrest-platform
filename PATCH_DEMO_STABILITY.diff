@@ -1,0 +1,197 @@
+diff --git a/public_html/order_track.php b/public_html/order_track.php
+--- a/public_html/order_track.php
++++ b/public_html/order_track.php
+@@ -1,58 +1,107 @@
+ <?php
+ 
+ require_once __DIR__ . '/../app/bootstrap.php';
+ 
+ $pdo = db();
+ 
+-if (session_status() === PHP_SESSION_NONE) session_start();
++if (session_status() === PHP_SESSION_NONE) {
++    session_start();
++}
+ 
++$tableId  = isset($_GET['table_id']) ? (int)$_GET['table_id'] : 0;
++$orderIdRaw = isset($_GET['order_id']) ? trim((string)$_GET['order_id']) : '';
++$orderId  = (ctype_digit($orderIdRaw) && $orderIdRaw !== '') ? (int)$orderIdRaw : 0;
+ 
+-if (!$currentRestaurant) {
+-    http_response_code(404);
+-    echo "Ресторан не найден (по поддомену).";
+-    exit;
+-}
++$orderIdMode = ($orderId > 0);
+ 
+-$tableId = isset($_GET['table_id']) ? (int)$_GET['table_id'] : 0;
+-$orderId = isset($_GET['order_id']) ? (int)$_GET['order_id'] : 0;
+-
+-if ($tableId <= 0 || $orderId <= 0) {
+-    http_response_code(400);
+-    echo "Некорректные параметры.";
+-    exit;
+-}
+-
+-
+-$trackKey = 'last_order_' . $currentRestaurant['id'] . '_' . $tableId;
+-if (empty($_SESSION[$trackKey]) || (int)$_SESSION[$trackKey] !== $orderId) {
+-    http_response_code(404);
+-    echo "Заказ не найден.";
+-    exit;
+-}
+-
+-$stmt = $pdo->prepare("SELECT * FROM tables WHERE id = :id AND restaurant_id = :rest LIMIT 1");
+-$stmt->execute([':id' => $tableId, ':rest' => $currentRestaurant['id']]);
+-$table = $stmt->fetch(PDO::FETCH_ASSOC);
+-if (!$table) {
+-    http_response_code(404);
+-    echo "Стол не найден.";
+-    exit;
+-}
+-
+-
+-$stmt = $pdo->prepare("
+-    SELECT id, total_price, payment_type, payment_status, order_status,
+-           loyalty_phone, loyalty_points_accrued, loyalty_points_spent, loyalty_points_balance_after,
+-           created_at, updated_at
+-    FROM orders
+-    WHERE id = :oid AND restaurant_id = :rest AND table_id = :table
+-    LIMIT 1
+-");
+-$stmt->execute([
+-    ':oid'   => $orderId,
+-    ':rest'  => $currentRestaurant['id'],
+-    ':table' => $tableId,
+-]);
+-$order = $stmt->fetch(PDO::FETCH_ASSOC);
+-
+-if (!$order) {
+-    http_response_code(404);
+-    echo "Заказ не найден.";
+-    exit;
+-}
++// Mode 1: order_id only — load order, derive restaurant and table from it.
++if ($orderIdMode && $orderId > 0) {
++    $stmt = $pdo->prepare("SELECT id, restaurant_id, table_id, total_price, payment_type, payment_status, order_status,
++        loyalty_phone, loyalty_points_accrued, loyalty_points_spent, loyalty_points_balance_after, created_at, updated_at
++        FROM orders WHERE id = :oid LIMIT 1");
++    $stmt->execute([':oid' => $orderId]);
++    $order = $stmt->fetch(PDO::FETCH_ASSOC);
++    if (!$order) {
++        http_response_code(404);
++        header('Content-Type: application/json; charset=utf-8');
++        echo json_encode(['success' => false, 'error' => 'order_not_found'], JSON_UNESCAPED_UNICODE);
++        exit;
++    }
++    $restaurantId = (int)$order['restaurant_id'];
++    $tableId      = (int)$order['table_id'];
++    if ($restaurantId <= 0 || $tableId <= 0) {
++        http_response_code(404);
++        header('Content-Type: application/json; charset=utf-8');
++        echo json_encode(['success' => false, 'error' => 'order_invalid'], JSON_UNESCAPED_UNICODE);
++        exit;
++    }
++    if (!function_exists('schema_guard_restaurants_deleted_sql')) {
++        require_once __DIR__ . '/../app/schema_guard.php';
++    }
++    $deletedSql = schema_guard_restaurants_deleted_sql('r');
++    $statusSql  = (function_exists('db_column_exists') && db_column_exists('restaurants', 'status')) ? " AND r.status = 'active'" : '';
++    $stmt = $pdo->prepare("SELECT r.* FROM restaurants r WHERE r.id = :rid" . $statusSql . $deletedSql . " LIMIT 1");
++    $stmt->execute([':rid' => $restaurantId]);
++    $currentRestaurant = $stmt->fetch(PDO::FETCH_ASSOC);
++    if (!$currentRestaurant) {
++        http_response_code(404);
++        header('Content-Type: application/json; charset=utf-8');
++        echo json_encode(['success' => false, 'error' => 'restaurant_not_found'], JSON_UNESCAPED_UNICODE);
++        exit;
++    }
++    $table = null;
++    $tStmt = $pdo->prepare("SELECT * FROM tables WHERE id = :id AND restaurant_id = :rest LIMIT 1");
++    $tStmt->execute([':id' => $tableId, ':rest' => $restaurantId]);
++    $table = $tStmt->fetch(PDO::FETCH_ASSOC);
++    if (!$table) {
++        http_response_code(404);
++        echo "Стол не найден.";
++        exit;
++    }
++    // Continue to order items and HTML (same order row already loaded).
++} else {
++    // Mode 2: require subdomain restaurant + table_id + order_id + session.
++    if (!$currentRestaurant) {
++        http_response_code(404);
++        echo "Ресторан не найден (по поддомену).";
++        exit;
++    }
++    if ($tableId <= 0 || $orderId <= 0) {
++        http_response_code(400);
++        echo "Некорректные параметры.";
++        exit;
++    }
++    $trackKey = 'last_order_' . $currentRestaurant['id'] . '_' . $tableId;
++    if (empty($_SESSION[$trackKey]) || (int)$_SESSION[$trackKey] !== $orderId) {
++        http_response_code(404);
++        echo "Заказ не найден.";
++        exit;
++    }
++    $stmt = $pdo->prepare("SELECT * FROM tables WHERE id = :id AND restaurant_id = :rest LIMIT 1");
++    $stmt->execute([':id' => $tableId, ':rest' => $currentRestaurant['id']]);
++    $table = $stmt->fetch(PDO::FETCH_ASSOC);
++    if (!$table) {
++        http_response_code(404);
++        echo "Стол не найден.";
++        exit;
++    }
++    $stmt = $pdo->prepare("
++        SELECT id, total_price, payment_type, payment_status, order_status,
++               loyalty_phone, loyalty_points_accrued, loyalty_points_spent, loyalty_points_balance_after,
++               created_at, updated_at
++        FROM orders
++        WHERE id = :oid AND restaurant_id = :rest AND table_id = :table
++        LIMIT 1
++    ");
++    $stmt->execute([
++        ':oid'   => $orderId,
++        ':rest'  => $currentRestaurant['id'],
++        ':table' => $tableId,
++    ]);
++    $order = $stmt->fetch(PDO::FETCH_ASSOC);
++    if (!$order) {
++        http_response_code(404);
++        echo "Заказ не найден.";
++        exit;
++    }
++}
+ 
+ 
+ diff --git a/app/growth.php b/app/growth.php
+--- a/app/growth.php
++++ b/app/growth.php
+@@ -354,11 +354,17 @@
+         if (!empty($ids)) {
+             $placeholders = implode(',', array_fill(0, count($ids), '?'));
+-            $ordersStatusSql = (function_exists('db_column_exists') && db_column_exists('orders', 'status'))
+-                ? ' AND status = \'paid\''
+-                : '';
+-            $sql = "SELECT COUNT(*), COALESCE(SUM(total_amount), 0) FROM orders WHERE restaurant_id IN ($placeholders){$ordersStatusSql} AND created_at >= ? AND created_at <= ?";
++            $ordersWhere = '';
++            if (function_exists('db_column_exists')) {
++                if (db_column_exists('orders', 'payment_status')) {
++                    $ordersWhere = " AND payment_status = 'paid'";
++                } elseif (db_column_exists('orders', 'order_status')) {
++                    $ordersWhere = " AND order_status IN ('paid','done','completed')";
++                }
++            }
++            $amountCol = (function_exists('db_column_exists') && db_column_exists('orders', 'total_amount')) ? 'total_amount' : 'total_price';
++            $sql = "SELECT COUNT(*), COALESCE(SUM({$amountCol}), 0) FROM orders WHERE restaurant_id IN ($placeholders){$ordersWhere} AND created_at >= ? AND created_at <= ?";
+             $params = array_merge($ids, [$todayStart, $todayEnd]);
+             try {
+                 $stmt = $pdo->prepare($sql);
+@@ -368,7 +374,7 @@
+                 $revenue = (float)$row[1];
+             } catch (Throwable $e) {
+-                error_log('GROWTH_COLLECT_USAGE_ORDERS_ERROR user_id=' . $userId . ' ' . $e->getMessage());
++                error_log('GROWTH_COLLECT_USAGE_ORDERS_ERROR user_id=' . $userId . ' uri=' . ($_SERVER['REQUEST_URI'] ?? '') . ' ' . $e->getMessage());
+                 $orders = 0;
+                 $revenue = 0.0;
+             }

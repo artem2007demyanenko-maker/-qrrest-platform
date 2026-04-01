@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="QR Rest">
+  <defs>
+    <linearGradient id="br-bg" x1="0" y1="0" x2="32" y2="32">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#br-bg)"/>
+  <rect x="1.5" y="1.5" width="29" height="29" rx="6.5" stroke="#475569" stroke-width="1" fill="none"/>
+  <path fill="#34d399" d="M7 7h8v8H7V7zm2 2v4h4V9H9zM17 7h6v6h-6V7zm1.5 1.5v1h1v-1h-1zm2 0v1h1v-1h-1zM7 17h6v6H7v-6zm1.5 1.5v1h1v-1h-1zm2 0v1h1v-1h-1z"/>
+  <path fill="#64748b" d="M17 17h2v2h-2v-2zm3 0h2v2h-2v-2zm0 2.5h2v2h-2v-2zm3-2.5h2v2h-2v-2zm0 2.5h2v2h-2v-2zM17 22h2v2h-2v-2zm3 0h2v2h-2v-2z"/>
+  <ellipse cx="16" cy="26.5" rx="9" ry="2.2" fill="none" stroke="#94a3b8" stroke-width="1.2"/>
+  <ellipse cx="16" cy="26" rx="7" ry="1.5" fill="#334155" opacity="0.85"/>
+  <path stroke="#cbd5e1" stroke-width="1.2" stroke-linecap="round" d="M22 18v6M21 18v6M23 18v6" opacity="0.95"/>
+</svg>

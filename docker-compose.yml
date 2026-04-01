@@ -1,0 +1,60 @@
+services:
+  web:
+    build: .
+    ports:
+      - "80:80"
+    environment:
+      - APP_RUNTIME=docker
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_NAME=qr_rest
+      - DB_USER=qr
+      - DB_PASS=qrpass
+    volumes:
+      - ./:/var/www/html
+    depends_on:
+      - db
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: qr_rest
+      MYSQL_USER: qr
+      MYSQL_PASSWORD: qrpass
+      MYSQL_ROOT_PASSWORD: rootpass
+    ports:
+      - "3307:3306"
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - dbdata:/var/lib/mysql
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: db
+    depends_on:
+      - db
+
+  migrate:
+    image: mysql:8.0
+    depends_on:
+      - db
+    volumes:
+      - ./db/patches:/patches:ro
+    entrypoint: ["/bin/bash", "-lc"]
+    command: >
+        set -e
+        until mysqladmin ping -hdb -uqr -pqrpass --silent; do
+          echo "waiting for db..."
+          sleep 2
+        done
+        shopt -s nullglob
+        for f in /patches/*.sql; do
+        echo "apply $$f"
+        mysql -hdb -uqr -pqrpass qr_rest < "$$f"
+        done
+        echo "migrations done"
+volumes:
+  dbdata:

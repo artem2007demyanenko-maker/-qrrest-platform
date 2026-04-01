@@ -1,0 +1,11 @@
+# Production cron examples for QR Restaurant SaaS.
+# Run on the VPS host (not inside container). Replace /path/to/project with actual path.
+
+# Every 5 minutes — main cron (CRM outbox, optional billing/lead scoring)
+*/5 * * * * cd /path/to/project && docker compose -f docker-compose.prod.yml --env-file .env.production exec -T app php scripts/cron_runner.php >> /var/log/qr-rest-cron.log 2>&1
+
+# Or if project is in /opt/qr-rest:
+# */5 * * * * cd /opt/qr-rest && docker compose -f docker-compose.prod.yml --env-file .env.production exec -T app php scripts/cron_runner.php >> /var/log/qr-rest-cron.log 2>&1
+
+# Daily backup at 02:00 (ensure DB_* are in .env.production)
+# 0 2 * * * cd /path/to/project && docker compose -f docker-compose.prod.yml --env-file .env.production exec -T app bash scripts/db_backup.sh >> /var/log/qr-rest-backup.log 2>&1

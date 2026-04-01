@@ -1,0 +1,26 @@
+#
+# Example logrotate config for QR Restaurant SaaS.
+# Adjust paths for your server layout.
+#
+# Place a copy (edited) under /etc/logrotate.d/qr-rest on the host.
+
+/opt/qr-rest/storage/logs/app.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+
+/var/log/qr-rest-cron.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+

@@ -1,0 +1,27 @@
+CREATE TABLE IF NOT EXISTS owner_alerts_log (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id INT NOT NULL,
+  scope_hash VARCHAR(64) NOT NULL,
+  scope_label VARCHAR(128) NOT NULL,
+  range_norm VARCHAR(10) NOT NULL,
+  period_start_msk VARCHAR(19) NULL,
+  period_end_msk   VARCHAR(19) NULL,
+  alert_key VARCHAR(64) NOT NULL,
+  severity VARCHAR(16) NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  meta_json JSON NULL,
+  actions_json JSON NULL,
+  first_seen_at DATETIME NOT NULL,
+  last_seen_at  DATETIME NOT NULL,
+  seen_count INT NOT NULL DEFAULT 1,
+  status VARCHAR(16) NOT NULL DEFAULT 'open',
+  ack_at DATETIME NULL,
+  snooze_until DATETIME NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_user_scope_alert (user_id, scope_hash, alert_key),
+  KEY idx_user_last (user_id, last_seen_at),
+  KEY idx_user_status (user_id, status),
+  KEY idx_scope (scope_hash)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
