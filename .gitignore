@@ -1,0 +1,28 @@
+
+# ENV (ОЧЕНЬ ВАЖНО)
+.env.production
+.env
+.env.*
+
+# Mac мусор
+.DS_Store
+
+# Логи
+storage/logs/*
+!storage/logs/.gitkeep
+
+# Бэкапы
+storage/backups/*
+!storage/backups/.gitkeep
+
+# Uploads / runtime (если не критичны)
+public_html/storage/menu_images/*
+public_html/storage/qr/*
+
+# Временные файлы
+*.log
+*.tmp
+
+# IDE
+.vscode/
+.idea/
