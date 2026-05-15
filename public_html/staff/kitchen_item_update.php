@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../../app/bootstrap.php';
 require_once __DIR__ . '/../../app/kds_helpers.php';
+require_once __DIR__ . '/../../app/waiter_calls.php';
+require_once __DIR__ . '/../../app/guest_order_loyalty_attach.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -21,7 +23,39 @@ if (!$currentRestaurant) {
 }
 
 $restaurantId = (int)($currentRestaurant['id'] ?? 0);
-require_restaurant_role($restaurantId, ['staff', 'admin', 'owner']);
+require_kitchen_access($restaurantId);
+$staffRole = function_exists('current_user_restaurant_role')
+    ? normalize_restaurant_role((string)(current_user_restaurant_role($restaurantId) ?? ''))
+    : '';
+$staffStation = function_exists('current_staff_station')
+    ? (string)current_staff_station($restaurantId)
+    : ($staffRole === 'bar' ? 'bar' : 'hot');
+$staffStationKds = function_exists('station_to_kds_key')
+    ? station_to_kds_key($staffStation)
+    : ($staffRole === 'bar' ? 'bar' : 'kitchen');
+$barStationLocked = ($staffRole === 'bar');
+$isStationRole = function_exists('restaurant_role_is_station_role')
+    ? restaurant_role_is_station_role($staffRole)
+    : in_array($staffRole, ['bar', 'kitchen'], true);
+$isFixedStationRole = function_exists('restaurant_role_is_fixed_station_role')
+    ? restaurant_role_is_fixed_station_role($staffRole)
+    : ($staffRole === 'bar');
+
+function kitchen_orders_sync_loyalty_safe(PDO $pdo, array $restaurantRow, int $orderId): void
+{
+    if (!function_exists('guest_order_loyalty_sync')) {
+        return;
+    }
+
+    try {
+        $res = guest_order_loyalty_sync($pdo, $restaurantRow, $orderId, null);
+        if (!is_array($res) || empty($res['ok'])) {
+            error_log('staff/kitchen_item_update loyalty_sync order_id=' . $orderId . ' error=' . (string)($res['error'] ?? 'unknown'));
+        }
+    } catch (Throwable $e) {
+        error_log('staff/kitchen_item_update loyalty_sync order_id=' . $orderId . ' ' . $e->getMessage());
+    }
+}
 
 $pdo = db();
 if (!$pdo instanceof PDO) {
@@ -34,6 +68,17 @@ if (file_exists(__DIR__ . '/../../app/schema_guard.php')) {
     require_once __DIR__ . '/../../app/schema_guard.php';
 }
 kds_ensure_schema($pdo);
+$hasStationCompletedAtCol = function_exists('db_column_exists') && db_column_exists('order_items', 'station_completed_at');
+$hasOrderItemStationStatusCol = function_exists('db_column_exists') && db_column_exists('order_items', 'station_status');
+$hasOrderItemKdsStatusCol = function_exists('db_column_exists') && db_column_exists('order_items', 'kds_status');
+$hasOrderItemStartedAtCol = function_exists('db_column_exists') && db_column_exists('order_items', 'started_at');
+$hasOrderItemReadyAtCol = function_exists('db_column_exists') && db_column_exists('order_items', 'ready_at');
+$hasOrderItemKdsStartedAtCol = function_exists('db_column_exists') && db_column_exists('order_items', 'kds_started_at');
+$hasOrderItemKdsReadyAtCol = function_exists('db_column_exists') && db_column_exists('order_items', 'kds_ready_at');
+$hasOrderItemProdStationCol = function_exists('db_column_exists') && db_column_exists('order_items', 'production_station');
+$hasMenuProdStationCol = function_exists('db_column_exists') && db_column_exists('menu_items', 'production_station');
+$hasMenuStationCol = function_exists('db_column_exists') && db_column_exists('menu_items', 'station');
+$hasMenuKitchenStationCol = function_exists('db_column_exists') && db_column_exists('menu_items', 'kitchen_station');
 
 if (empty($_SESSION['csrf'])) {
     $_SESSION['csrf'] = bin2hex(random_bytes(32));
@@ -47,6 +92,9 @@ if (!$csrfOk) {
 $orderId = isset($_POST['order_id']) ? (int)$_POST['order_id'] : 0;
 $itemId = isset($_POST['item_id']) ? (int)$_POST['item_id'] : 0;
 $station = kds_normalize_station((string)($_POST['station'] ?? ''));
+if ($isFixedStationRole && $staffStationKds !== 'all') {
+    $station = $staffStationKds;
+}
 $action = strtolower(trim((string)($_POST['action'] ?? '')));
 
 if ($orderId <= 0) {
@@ -57,6 +105,22 @@ if ($orderId <= 0) {
 $allowedActions = ['accept', 'start', 'ready', 'notify_waiter'];
 if (!in_array($action, $allowedActions, true)) {
     echo json_encode(['success' => false, 'message' => 'Некорректное действие'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+if ($action === 'notify_waiter' && !waiter_calls_require_table()) {
+    http_response_code(503);
+    echo json_encode(['success' => false, 'message' => 'Функция временно недоступна'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+if ($action !== 'notify_waiter' && $station === '') {
+    echo json_encode(['success' => false, 'message' => 'Некорректная станция'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+if ($action !== 'notify_waiter' && !(function_exists('can_access_station')
+    ? can_access_station($station, $restaurantId, $staffRole)
+    : user_has_station_access($staffRole, $station))) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'station_access_denied'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -72,27 +136,6 @@ try {
     $pdo->beginTransaction();
 
     if ($action === 'notify_waiter') {
-        try {
-            if (!function_exists('db_table_exists') || !db_table_exists('waiter_calls')) {
-                $pdo->exec("
-                    CREATE TABLE IF NOT EXISTS waiter_calls (
-                        id INT AUTO_INCREMENT PRIMARY KEY,
-                        restaurant_id INT NOT NULL,
-                        table_id INT NOT NULL,
-                        order_id INT NULL,
-                        status VARCHAR(20) NOT NULL DEFAULT 'active',
-                        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        resolved_at DATETIME NULL,
-                        KEY idx_rest_table (restaurant_id, table_id),
-                        KEY idx_rest_status (restaurant_id, status),
-                        KEY idx_rest_order (restaurant_id, order_id)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                ");
-            }
-        } catch (Throwable $e) {
-            // best-effort
-        }
-
         $stmtActive = $pdo->prepare("
             SELECT id
             FROM waiter_calls
@@ -131,8 +174,6 @@ try {
         exit;
     }
 
-    $stationExpr = kds_menu_station_expr($pdo, 'mi');
-
     $targetStatus = 'new';
     $fromStatuses = ['new'];
     if ($action === 'accept') {
@@ -157,23 +198,57 @@ try {
         $params[$ph] = $statusVal;
     }
 
+    $statusExpr = function_exists('kds_item_status_sql_expr')
+        ? kds_item_status_sql_expr('oi')
+        : "LOWER(COALESCE(NULLIF(TRIM(oi.station_status), ''), 'new'))";
+    $itemStationSqlExpr = function_exists('kds_item_station_sql_expr')
+        ? kds_item_station_sql_expr($pdo, 'oi', 'mi')
+        : "CASE
+            WHEN LOWER(COALESCE(NULLIF(TRIM(" . ($hasOrderItemProdStationCol ? "oi.production_station" : "''") . "), ''), NULLIF(TRIM(" . ($hasMenuProdStationCol ? "mi.production_station" : "''") . "), ''), 'kitchen')) IN ('', 'hot', 'kitchen') THEN 'kitchen'
+            ELSE LOWER(COALESCE(NULLIF(TRIM(" . ($hasOrderItemProdStationCol ? "oi.production_station" : "''") . "), ''), NULLIF(TRIM(" . ($hasMenuProdStationCol ? "mi.production_station" : "''") . "), ''), 'kitchen'))
+        END";
+
     $selectSql = "
-        SELECT oi.id
+        SELECT
+            oi.id,
+            oi.menu_item_id,
+            " . ((function_exists('db_column_exists') && db_column_exists('order_items', 'item_name')) ? "oi.item_name" : "NULL") . " AS item_name,
+            {$itemStationSqlExpr} AS production_station,
+            " . kds_menu_station_expr($pdo, 'mi') . " AS station_key,
+            {$statusExpr} AS item_kds_status
         FROM order_items oi
         LEFT JOIN menu_items mi ON mi.id = oi.menu_item_id
+        LEFT JOIN menu_categories mc ON mc.id = mi.category_id
         WHERE oi.order_id = :oid
-          AND {$stationExpr} = :station
-          AND LOWER(COALESCE(NULLIF(TRIM(oi.station_status), ''), 'new')) IN (" . implode(',', $statusPlaceholders) . ")
+          AND {$statusExpr} IN (" . implode(',', $statusPlaceholders) . ")
+          AND {$itemStationSqlExpr} = :station
     ";
     if ($itemId > 0) {
         $selectSql .= " AND oi.id = :item_id ";
     }
+    $selectSql .= " FOR UPDATE";
     $stmtItems = $pdo->prepare($selectSql);
     if ($itemId > 0) {
         $params[':item_id'] = $itemId;
     }
     $stmtItems->execute($params);
-    $targetItemIds = array_values(array_filter(array_map('intval', $stmtItems->fetchAll(PDO::FETCH_COLUMN))));
+    $targetRows = $stmtItems->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $targetItemIds = [];
+    foreach ($targetRows as $targetRow) {
+        $route = function_exists('kitchen_station_item_route')
+            ? kitchen_station_item_route($pdo, $restaurantId, $targetRow)
+            : [
+                'station_key' => (function_exists('kds_resolve_station_for_item')
+                    ? kds_resolve_station_for_item($targetRow)
+                    : kds_normalize_station((string)($targetRow['station_key'] ?? 'kitchen'))),
+            ];
+        $itemStation = kds_normalize_station((string)($route['station_key'] ?? 'kitchen'));
+        if ($itemStation !== $station) {
+            continue;
+        }
+        $targetItemIds[] = (int)($targetRow['id'] ?? 0);
+    }
+    $targetItemIds = array_values(array_filter($targetItemIds));
 
     if (!$targetItemIds) {
         $pdo->rollBack();
@@ -185,29 +260,66 @@ try {
     }
 
     $in = implode(',', $targetItemIds);
-    $set = "station_status = :st";
-    if ($action === 'start' && function_exists('db_column_exists') && db_column_exists('order_items', 'started_at')) {
-        $set .= ", started_at = COALESCE(started_at, NOW())";
+    $setParts = [];
+    $updateParams = [];
+    if ($hasOrderItemKdsStatusCol) {
+        $setParts[] = "kds_status = :st_kds";
+        $updateParams[':st_kds'] = $targetStatus;
+    }
+    if ($hasOrderItemStationStatusCol) {
+        $setParts[] = "station_status = :st_station";
+        $updateParams[':st_station'] = $targetStatus;
+    }
+    if ($setParts === []) {
+        $setParts[] = "station_status = :st_station";
+        $updateParams[':st_station'] = $targetStatus;
+    }
+
+    if ($action === 'start' || $action === 'accept') {
+        if ($hasOrderItemKdsStartedAtCol) {
+            $setParts[] = "kds_started_at = COALESCE(kds_started_at, NOW())";
+        }
+        if ($hasOrderItemStartedAtCol) {
+            $setParts[] = "started_at = COALESCE(started_at, NOW())";
+        }
+        if ($hasStationCompletedAtCol) {
+            $setParts[] = "station_completed_at = NULL";
+        }
     }
     if ($action === 'ready') {
-        if (function_exists('db_column_exists') && db_column_exists('order_items', 'started_at')) {
-            $set .= ", started_at = COALESCE(started_at, NOW())";
+        if ($hasOrderItemKdsStartedAtCol) {
+            $setParts[] = "kds_started_at = COALESCE(kds_started_at, NOW())";
         }
-        if (function_exists('db_column_exists') && db_column_exists('order_items', 'ready_at')) {
-            $set .= ", ready_at = NOW()";
+        if ($hasOrderItemStartedAtCol) {
+            $setParts[] = "started_at = COALESCE(started_at, NOW())";
+        }
+        if ($hasOrderItemKdsReadyAtCol) {
+            $setParts[] = "kds_ready_at = NOW()";
+        }
+        if ($hasOrderItemReadyAtCol) {
+            $setParts[] = "ready_at = NOW()";
+        }
+        if ($hasStationCompletedAtCol) {
+            $setParts[] = "station_completed_at = NOW()";
         }
     }
 
-    $updSql = "UPDATE order_items SET {$set} WHERE id IN ({$in})";
+    $updSql = "UPDATE order_items SET " . implode(', ', $setParts) . " WHERE id IN ({$in})";
     $upd = $pdo->prepare($updSql);
-    $upd->execute([':st' => $targetStatus]);
-
-    kds_recalculate_order_status($pdo, $orderId);
+    $upd->execute($updateParams);
     $progress = kds_order_progress($pdo, $orderId);
+    $kdsState = function_exists('calculate_order_kds_state')
+        ? calculate_order_kds_state($pdo, $orderId)
+        : ['code' => 'new', 'label' => 'Новый'];
+    $readyForServe = function_exists('is_order_ready_for_serve')
+        ? is_order_ready_for_serve($pdo, $orderId)
+        : false;
 
     $stmtStatus = $pdo->prepare("SELECT order_status FROM orders WHERE id = :oid LIMIT 1");
     $stmtStatus->execute([':oid' => $orderId]);
     $newOrderStatus = (string)($stmtStatus->fetchColumn() ?: 'new');
+
+    kitchen_orders_sync_loyalty_safe($pdo, $currentRestaurant, $orderId);
 
     $pdo->commit();
 
@@ -217,8 +329,11 @@ try {
         'updated_items_count' => count($targetItemIds),
         'station' => $station,
         'station_status' => $targetStatus,
+        'kds_status' => $targetStatus,
         'order_status' => $newOrderStatus,
         'progress' => $progress,
+        'kds_order_state' => $kdsState,
+        'ready_for_serve' => $readyForServe,
     ], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
     if ($pdo->inTransaction()) {
