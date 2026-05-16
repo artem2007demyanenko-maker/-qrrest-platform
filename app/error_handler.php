@@ -25,7 +25,8 @@ function stability_exception_handler(Throwable $e): void
     ];
     error_log('STABILITY_ERROR ' . json_encode($payload, JSON_UNESCAPED_UNICODE));
 
-    $wantsJson = (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false)
+    $wantsJson = (function_exists('auth_request_expects_json') && auth_request_expects_json())
+        || (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false)
         || (strpos($uri, '/health.php') !== false);
     if (!headers_sent()) {
         http_response_code(500);

@@ -1,0 +1,22 @@
+{
+  "name": "qr-rest",
+  "version": "1.0.0",
+  "description": "PHP-приложение (меню, заказы, гость, кабинет ресторана). Деплой и прод — см. короткие операционные документы:",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "smoke": "playwright test --project=chromium",
+    "smoke:headed": "PLAYWRIGHT_HEADED=1 playwright test --project=chromium --headed",
+    "smoke:report": "playwright show-report",
+    "test": "npm run smoke"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "playwright": "^1.60.0"
+  }
+}

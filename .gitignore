@@ -3,6 +3,7 @@
 .env.production
 .env
 .env.*
+!.env.playwright.example
 
 # Mac мусор
 .DS_Store
@@ -23,6 +24,15 @@ public_html/storage/qr/*
 *.log
 *.tmp
 
+# Playwright artifacts
+test-results/
+playwright-report/
+blob-report/
+
 # IDE
 .vscode/
 .idea/
+
+# Node / Playwright
+node_modules/
+coverage/
