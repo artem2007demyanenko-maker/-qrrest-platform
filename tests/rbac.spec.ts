@@ -1,6 +1,6 @@
 import { expect, expectNoServerErrors, expectPageHealthy, expectRestrictedOrRedirected, loginAs, test, visitReadOnly } from './fixtures';
 import { barCredentials, staffCredentials, waiterCredentials } from './config';
-import { expectNoRuntimeText } from './test-helpers';
+import { expectNoRuntimeText, skipOrFail } from './test-helpers';
 
 const protectedRoutes = [
   '/staff/orders.php',
@@ -19,7 +19,7 @@ test.describe('RBAC smoke checks', () => {
 
   test('waiter/staff account does not get station KDS access', async ({ page, diagnostics }) => {
     const credentials = waiterCredentials || staffCredentials;
-    test.skip(!credentials, 'Set QRREST_WAITER_EMAIL/PASSWORD or QRREST_STAFF_EMAIL/PASSWORD to run waiter RBAC smoke checks.');
+    skipOrFail(test.skip, !credentials, 'Set QRREST_WAITER_EMAIL/PASSWORD or QRREST_STAFF_EMAIL/PASSWORD to run waiter RBAC smoke checks.');
 
     await loginAs(page, credentials!);
     const response = await visitReadOnly(page, '/staff/kitchen.php?station=cold');
@@ -36,7 +36,7 @@ test.describe('RBAC smoke checks', () => {
   });
 
   test('bar account can open bar panel without generic kitchen leakage', async ({ page, diagnostics }) => {
-    test.skip(!barCredentials, 'Set QRREST_BAR_EMAIL/PASSWORD to run bar RBAC smoke checks.');
+    skipOrFail(test.skip, !barCredentials, 'Set QRREST_BAR_EMAIL/PASSWORD to run bar RBAC smoke checks.');
 
     await loginAs(page, barCredentials!);
     const response = await visitReadOnly(page, '/staff/bar.php');

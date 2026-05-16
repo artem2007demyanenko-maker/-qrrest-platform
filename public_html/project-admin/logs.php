@@ -15,7 +15,7 @@ if (function_exists('require_login')) {
 }
 
 $currentUser = function_exists('auth_user') ? auth_user() : null;
-if (!$currentUser || ($currentUser['global_role'] ?? null) !== 'project_owner') {
+if (!function_exists('is_project_owner') || !is_project_owner()) {
     http_response_code(403);
     echo "Доступ запрещён (только владелец платформы).";
     exit;
@@ -158,13 +158,15 @@ if (is_file($configPath)) {
     </div>
 
     <div class="relative z-10 max-w-6xl mx-auto px-4 py-6 sm:py-8">
+        <?php $platformNavActive = 'logs'; require __DIR__ . '/_platform_nav.php'; ?>
 
         <header class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-                <a href="/project-admin/index.php"
-                   class="inline-flex items-center gap-2 text-[11px] text-slate-500 hover:text-emerald-300 mb-2">
-                    ← Панель владельца платформы
-                </a>
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-[11px] text-slate-500">
+                    <a href="/project-admin/leads.php" class="hover:text-sky-300">Лиды</a>
+                    <a href="/project-admin/sales_forecast.php" class="hover:text-emerald-300">Sales Forecast</a>
+                    <a href="/project-admin/diagnostics.php" class="hover:text-slate-200">Diagnostics</a>
+                </div>
                 <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-700 text-[11px] text-slate-300 mb-2">
                     Логи действий
                 </div>

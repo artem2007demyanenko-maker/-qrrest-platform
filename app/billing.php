@@ -5,6 +5,473 @@
  */
 
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/restaurant_full_access.php';
+
+function billing_normalize_restaurant_plan_code(string $planCode): string
+{
+    $planCode = strtolower(trim($planCode));
+    if (in_array($planCode, ['growth', 'starter', 'basic'], true)) {
+        return 'growth';
+    }
+    if ($planCode === 'pro') {
+        return 'pro';
+    }
+    return 'free';
+}
+
+function billing_restaurant_subscriptions_ready(): bool
+{
+    static $ok = null;
+    if ($ok !== null) {
+        return $ok;
+    }
+    if (!function_exists('db_table_exists')) {
+        @require_once __DIR__ . '/schema_guard.php';
+    }
+    $ok = function_exists('db_table_exists') && db_table_exists('restaurant_subscriptions');
+    return $ok;
+}
+
+function billing_resolve_primary_restaurant_for_owner(int $userId): int
+{
+    if ($userId <= 0 || !function_exists('db')) {
+        return 0;
+    }
+    try {
+        $pdo = db();
+        $stmt = $pdo->prepare("SELECT id FROM restaurants WHERE owner_user_id = ? ORDER BY id ASC LIMIT 1");
+        $stmt->execute([$userId]);
+        return (int)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        error_log('BILLING_RESOLVE_PRIMARY_RESTAURANT_ERROR user_id=' . $userId . ' ' . $e->getMessage());
+        return 0;
+    }
+}
+
+function billing_sync_restaurant_subscription(int $restaurantId, string $planCode, string $status = 'active', ?string $expiresAt = null): bool
+{
+    if ($restaurantId <= 0 || !billing_restaurant_subscriptions_ready()) {
+        return false;
+    }
+    $planCode = billing_normalize_restaurant_plan_code($planCode);
+    $status = strtolower(trim($status));
+    if (!in_array($status, ['active', 'trial', 'canceled'], true)) {
+        $status = 'active';
+    }
+    try {
+        $pdo = db();
+        $stmt = $pdo->prepare("
+            INSERT INTO restaurant_subscriptions (restaurant_id, plan, status, expires_at)
+            VALUES (:rid, :plan, :status, :expires_at)
+            ON DUPLICATE KEY UPDATE
+                plan = VALUES(plan),
+                status = VALUES(status),
+                expires_at = VALUES(expires_at)
+        ");
+        $stmt->execute([
+            'rid' => $restaurantId,
+            'plan' => $planCode,
+            'status' => $status,
+            'expires_at' => $expiresAt,
+        ]);
+        return true;
+    } catch (Throwable $e) {
+        error_log('BILLING_SYNC_RESTAURANT_SUBSCRIPTION_ERROR rest_id=' . $restaurantId . ' plan=' . $planCode . ' ' . $e->getMessage());
+        return false;
+    }
+}
+
+function billing_seed_restaurant_trial(int $restaurantId, ?string $trialEndsAt = null): void
+{
+    if ($restaurantId <= 0 || !billing_restaurant_subscriptions_ready()) {
+        return;
+    }
+    try {
+        $pdo = db();
+        $stmt = $pdo->prepare("SELECT id, status FROM restaurant_subscriptions WHERE restaurant_id = ? LIMIT 1");
+        $stmt->execute([$restaurantId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row) {
+            return;
+        }
+        billing_sync_restaurant_subscription($restaurantId, 'free', 'trial', $trialEndsAt);
+    } catch (Throwable $e) {
+        error_log('BILLING_SEED_RESTAURANT_TRIAL_ERROR rest_id=' . $restaurantId . ' ' . $e->getMessage());
+    }
+}
+
+function billing_plan_catalog(): array
+{
+    return [
+        'free' => [
+            'code_label' => 'FREE',
+            'name' => 'Базовый запуск',
+            'description' => 'Чтобы запустить QR-меню, принимать заказы и увидеть первые результаты.',
+            'features' => [
+                'QR-меню, столы и базовый checkout',
+                'Dashboard, заказы и операционная картина дня',
+                'Онбординг, запуск и базовая аналитика',
+            ],
+            'growth_outcome' => 'Подходит, чтобы быстро запуститься и дойти до первого оплаченного заказа.',
+        ],
+        'growth' => [
+            'code_label' => 'GROWTH',
+            'name' => 'Рост повторной выручки',
+            'description' => 'Для возврата гостей и роста среднего чека через CRM и допродажи.',
+            'features' => [
+                'CRM возврата гостей и retention send-board',
+                'Smart upsell и аналитика допродаж',
+                'Retention-сценарии, drafts и очередь гостей',
+            ],
+            'growth_outcome' => 'Помогает системно возвращать гостей и растить средний чек.',
+        ],
+        'pro' => [
+            'code_label' => 'PRO',
+            'name' => 'Удержание и loyalty',
+            'description' => 'Для полной работы с лояльностью, бонусами и staff-assisted retention.',
+            'features' => [
+                'Всё из GROWTH',
+                'Программа лояльности и бонусные балансы',
+                'Staff-assisted loyalty flow и owner-журнал операций',
+            ],
+            'growth_outcome' => 'Добавляет loyalty-слой и более глубокую работу с повторными визитами.',
+        ],
+    ];
+}
+
+function billing_get_restaurant_subscription_snapshot(int $restaurantId): array
+{
+    $out = [
+        'exists' => false,
+        'plan' => 'free',
+        'status' => 'active',
+        'expires_at' => null,
+    ];
+    if ($restaurantId <= 0 || !billing_restaurant_subscriptions_ready()) {
+        return $out;
+    }
+    try {
+        $pdo = db();
+        $stmt = $pdo->prepare("SELECT plan, status, expires_at FROM restaurant_subscriptions WHERE restaurant_id = ? ORDER BY id DESC LIMIT 1");
+        $stmt->execute([$restaurantId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            return $out;
+        }
+        $out['exists'] = true;
+        $out['plan'] = billing_normalize_restaurant_plan_code((string)($row['plan'] ?? 'free'));
+        $out['status'] = (string)($row['status'] ?? 'active');
+        $out['expires_at'] = !empty($row['expires_at']) ? (string)$row['expires_at'] : null;
+    } catch (Throwable $e) {
+        error_log('BILLING_GET_RESTAURANT_SUBSCRIPTION_SNAPSHOT_ERROR rest_id=' . $restaurantId . ' ' . $e->getMessage());
+    }
+    return $out;
+}
+
+function billing_get_restaurant_access_snapshot(int $userId, int $restaurantId): array
+{
+    if ($restaurantId > 0 && function_exists('restaurant_has_full_access_override') && restaurant_has_full_access_override($restaurantId)) {
+        $catalog = billing_plan_catalog();
+        $planMeta = $catalog['pro'] ?? $catalog['growth'] ?? [];
+        return [
+            'status_key' => 'active_paid',
+            'status_label' => 'Активный тариф',
+            'status_heading' => 'Для тестового ресторана включён полный доступ',
+            'status_text' => 'Все product-функции открыты для end-to-end тестирования без trial и тарифных ограничений.',
+            'cta_label' => 'Полный доступ активен',
+            'is_trial' => false,
+            'is_expired' => false,
+            'has_active_paid_plan' => true,
+            'days_left' => 0,
+            'trial_ends_at' => null,
+            'restaurant_plan_code' => 'pro',
+            'restaurant_plan_label' => (string)($planMeta['code_label'] ?? 'PRO'),
+            'restaurant_plan_name' => (string)($planMeta['name'] ?? 'PRO'),
+            'restaurant_plan_description' => (string)($planMeta['description'] ?? ''),
+            'restaurant_plan_features' => (array)($planMeta['features'] ?? []),
+            'restaurant_plan_growth_outcome' => (string)($planMeta['growth_outcome'] ?? ''),
+            'paid_plan_code' => 'pro',
+            'paid_plan_label' => (string)($planMeta['code_label'] ?? 'PRO'),
+            'paid_plan_name' => (string)($planMeta['name'] ?? 'PRO'),
+            'paid_plan_features' => (array)($planMeta['features'] ?? []),
+            'paid_plan_growth_outcome' => (string)($planMeta['growth_outcome'] ?? ''),
+            'restaurant_subscription_status' => 'active',
+            'restaurant_subscription_expires_at' => null,
+        ];
+    }
+
+    $trial = billing_get_trial_info($userId, $restaurantId);
+    $catalog = billing_plan_catalog();
+    $restaurantSub = billing_get_restaurant_subscription_snapshot($restaurantId);
+    $subscription = billing_get_subscription($userId);
+    if (!empty($trial['has_active_paid_plan']) && $restaurantId > 0) {
+        $subscriptionPlanCode = billing_normalize_restaurant_plan_code((string)($subscription['plan_code'] ?? 'free'));
+        if ($subscriptionPlanCode !== 'free'
+            && (empty($restaurantSub['exists']) || billing_normalize_restaurant_plan_code((string)($restaurantSub['plan'] ?? 'free')) === 'free')) {
+            billing_sync_restaurant_subscription($restaurantId, $subscriptionPlanCode, 'active', $subscription['current_period_end'] ?? null);
+            $restaurantSub = billing_get_restaurant_subscription_snapshot($restaurantId);
+        }
+    }
+    $planCode = billing_normalize_restaurant_plan_code((string)($restaurantSub['plan'] ?? 'free'));
+    $planMeta = $catalog[$planCode] ?? $catalog['free'];
+    $paidPlanCode = $planCode === 'free' ? 'growth' : 'pro';
+    $paidPlanMeta = $catalog[$paidPlanCode] ?? $catalog['pro'];
+
+    $statusKey = 'base_free';
+    $statusLabel = 'Базовый доступ';
+    $statusHeading = 'Ресторан работает на базовом доступе';
+    $statusText = 'Можно принимать заказы и пройти базовый запуск. Growth-инструменты подключаются отдельно.';
+    $ctaLabel = 'Выбрать тариф';
+    if (!empty($trial['is_trial']) && empty($trial['is_expired'])) {
+        if ((int)($trial['days_left'] ?? 0) <= 3) {
+            $statusKey = 'trial_ending';
+            $statusLabel = 'Trial скоро закончится';
+            $statusHeading = 'Пора сохранить доступ к growth-инструментам';
+            $statusText = 'Ресторан уже настроен, и сейчас лучший момент выбрать тариф без паузы после окончания trial.';
+            $ctaLabel = 'Сохранить доступ';
+        } else {
+            $statusKey = 'trial';
+            $statusLabel = 'Пробный период';
+            $statusHeading = 'Идёт пробный период';
+            $statusText = 'Сейчас owner видит статус доступа и может спокойно выбрать следующий тарифный шаг без спешки.';
+            $ctaLabel = 'Выбрать тариф';
+        }
+    } elseif (!empty($trial['has_active_paid_plan'])) {
+        $statusKey = 'active_paid';
+        $statusLabel = 'Активный тариф';
+        $statusHeading = 'Платный тариф уже активен';
+        $statusText = 'Growth-функции уже можно использовать без ограничений текущего trial-слоя.';
+        $ctaLabel = 'Управлять тарифом';
+    } elseif (!empty($trial['is_expired'])) {
+        $statusKey = 'expired';
+        $statusLabel = 'Требуется продление';
+        $statusHeading = 'Пробный период завершён';
+        $statusText = 'Чтобы продолжить работу с CRM, аналитикой и growth-инструментами без пауз, нужно активировать тариф.';
+        $ctaLabel = 'Активировать тариф';
+    }
+
+    return [
+        'status_key' => $statusKey,
+        'status_label' => $statusLabel,
+        'status_heading' => $statusHeading,
+        'status_text' => $statusText,
+        'cta_label' => $ctaLabel,
+        'is_trial' => (bool)($trial['is_trial'] ?? false),
+        'is_expired' => (bool)($trial['is_expired'] ?? false),
+        'has_active_paid_plan' => (bool)($trial['has_active_paid_plan'] ?? false),
+        'days_left' => (int)($trial['days_left'] ?? 0),
+        'trial_ends_at' => $trial['trial_ends_at'] ?? null,
+        'restaurant_plan_code' => $planCode,
+        'restaurant_plan_label' => (string)($planMeta['code_label'] ?? strtoupper($planCode)),
+        'restaurant_plan_name' => (string)($planMeta['name'] ?? strtoupper($planCode)),
+        'restaurant_plan_description' => (string)($planMeta['description'] ?? ''),
+        'restaurant_plan_features' => (array)($planMeta['features'] ?? []),
+        'restaurant_plan_growth_outcome' => (string)($planMeta['growth_outcome'] ?? ''),
+        'paid_plan_code' => $paidPlanCode,
+        'paid_plan_label' => (string)($paidPlanMeta['code_label'] ?? strtoupper($paidPlanCode)),
+        'paid_plan_name' => (string)($paidPlanMeta['name'] ?? strtoupper($paidPlanCode)),
+        'paid_plan_features' => (array)($paidPlanMeta['features'] ?? []),
+        'paid_plan_growth_outcome' => (string)($paidPlanMeta['growth_outcome'] ?? ''),
+        'restaurant_subscription_status' => (string)($restaurantSub['status'] ?? 'active'),
+        'restaurant_subscription_expires_at' => $restaurantSub['expires_at'] ?? null,
+    ];
+}
+
+function billing_get_feature_paywall_context(int $userId, int $restaurantId, string $featureKey): array
+{
+    $featureKey = strtolower(trim($featureKey));
+    $access = billing_get_restaurant_access_snapshot($userId, $restaurantId);
+    $catalog = billing_plan_catalog();
+
+    if (file_exists(__DIR__ . '/activation_insights.php')) {
+        require_once __DIR__ . '/activation_insights.php';
+    }
+    if (file_exists(__DIR__ . '/onboarding_progress.php')) {
+        require_once __DIR__ . '/onboarding_progress.php';
+    }
+
+    $activation = function_exists('get_restaurant_activation_snapshot')
+        ? get_restaurant_activation_snapshot($restaurantId)
+        : [
+            'core_launch_complete' => false,
+            'orders_this_month' => 0,
+            'first_paid_order' => false,
+        ];
+    $menuCount = function_exists('onboarding_progress_menu_items_count') ? onboarding_progress_menu_items_count($restaurantId) : 0;
+    $tablesCount = function_exists('onboarding_progress_tables_count') ? onboarding_progress_tables_count($restaurantId) : 0;
+    $paidOrders = (int)($activation['orders_this_month'] ?? 0);
+    $firstPaid = !empty($activation['first_paid_order']);
+
+    $featureMap = [
+        'crm' => [
+            'plan_code' => 'growth',
+            'plan_label' => 'GROWTH',
+            'title' => 'CRM возврата гостей',
+            'subtitle' => 'Чтобы возвращать гостей системно, а не вручную по памяти.',
+            'benefits' => [
+                'Приоритетная очередь гостей и ready-to-send сценарии',
+                'One-click drafts, send-board и retention analytics',
+                'Повторная выручка по confirmed paid returns',
+            ],
+        ],
+        'crm_campaigns' => [
+            'plan_code' => 'growth',
+            'plan_label' => 'GROWTH',
+            'title' => 'CRM кампании и retention-запуски',
+            'subtitle' => 'Чтобы собирать кампании возврата поверх loyalty-сегментов и готовых шаблонов.',
+            'benefits' => [
+                'Готовые retention-сценарии и шаблоны сообщений',
+                'Ручные кампании по сегментам без тяжёлой automation-платформы',
+                'Понятная аналитика: что реально вернуло paid visits',
+            ],
+        ],
+        'upsell' => [
+            'plan_code' => 'growth',
+            'plan_label' => 'GROWTH',
+            'title' => 'Умные допродажи',
+            'subtitle' => 'Чтобы повышать средний чек через контекстные предложения в QR-меню.',
+            'benefits' => [
+                'Smart upsell в guest QR flow без навязчивого modal-flow',
+                'Optimization layer: видно, что усиливать и что отключать',
+                'Рост среднего чека через работающие пары блюд',
+            ],
+        ],
+        'upsell_analytics' => [
+            'plan_code' => 'growth',
+            'plan_label' => 'GROWTH',
+            'title' => 'Аналитика допродаж',
+            'subtitle' => 'Чтобы видеть, какие пары действительно добавляют выручку, а не просто показываются.',
+            'benefits' => [
+                'Показы, клики и accepted-to-order в одном owner-экране',
+                'Подсказки: что усиливать, что отключать, где мало данных',
+                'Связка аналитики с правилами и быстрыми CTA',
+            ],
+        ],
+        'loyalty' => [
+            'plan_code' => 'pro',
+            'plan_label' => 'PRO',
+            'title' => 'Лояльность и бонусы',
+            'subtitle' => 'Чтобы бонусы и retention работали как единая система, а не как отдельный модуль.',
+            'benefits' => [
+                'Бонусный баланс, начисления и списания по заказам',
+                'Staff-assisted loyalty flow и owner-журнал ручных операций',
+                'Loyalty-driven retention-сценарии и возврат гостей через бонусы',
+            ],
+        ],
+    ];
+    $feature = $featureMap[$featureKey] ?? $featureMap['crm'];
+
+    $phaseKey = 'base';
+    if (!empty($access['is_trial']) && empty($access['is_expired'])) {
+        $phaseKey = ((int)($access['days_left'] ?? 0) <= 3) ? 'trial_ending' : 'trial_active';
+    } elseif (!empty($access['is_expired'])) {
+        $phaseKey = 'expired';
+    } elseif (!empty($access['has_active_paid_plan'])) {
+        $phaseKey = 'active_paid';
+    }
+
+    $phaseMap = [
+        'trial_active' => [
+            'label' => 'Идёт пробный период',
+            'text' => 'Сейчас можно спокойно оценить ценность и выбрать growth-шаг заранее, без резкого обрыва после trial.',
+            'tone' => 'sky',
+            'cta' => 'Выбрать тариф заранее',
+        ],
+        'trial_ending' => [
+            'label' => 'Пробный период скоро закончится',
+            'text' => 'Ресторан уже настроен, поэтому сейчас лучший момент сохранить доступ к growth-инструментам и не терять темп.',
+            'tone' => 'amber',
+            'cta' => 'Сохранить доступ после trial',
+        ],
+        'expired' => [
+            'label' => 'Нужен recovery-шаг',
+            'text' => 'Trial завершён, но всё уже настроенное меню, QR и заказы сохраняются. Достаточно активировать тариф, чтобы вернуть growth-функции.',
+            'tone' => 'rose',
+            'cta' => 'Активировать и продолжить',
+        ],
+        'active_paid' => [
+            'label' => 'Платный доступ уже активен',
+            'text' => 'Эта возможность уже должна быть доступна в вашем тарифе. Если экран всё ещё закрыт, проверьте plan и feature-gates.',
+            'tone' => 'emerald',
+            'cta' => 'Открыть тариф и доступ',
+        ],
+        'base' => [
+            'label' => 'Базовый доступ',
+            'text' => 'Ресторан уже может работать на базовом запуске, а следующий тариф добавит growth-слой без смены текущего flow.',
+            'tone' => 'slate',
+            'cta' => 'Открыть тариф',
+        ],
+    ];
+    $phase = $phaseMap[$phaseKey];
+
+    $proofItems = [];
+    if ($menuCount > 0) {
+        $proofItems[] = 'Меню уже настроено: ' . $menuCount . ' блюд.';
+    }
+    if ($tablesCount > 0) {
+        $proofItems[] = 'Столы и QR уже готовы: ' . $tablesCount . '.';
+    }
+    if ($paidOrders > 0) {
+        $proofItems[] = 'Уже есть оплаченные заказы: ' . $paidOrders . ' в этом месяце.';
+    } elseif ($firstPaid) {
+        $proofItems[] = 'Первый оплаченный заказ уже был.';
+    }
+    if ($proofItems === []) {
+        $proofItems[] = 'После активации всё текущее меню, столы и базовые настройки сохранятся.';
+    }
+
+    $whyNow = 'Ресторан уже вышел из чистого onboarding и готов получать больше ценности от growth-функций.';
+    if ($featureKey === 'crm' || $featureKey === 'crm_campaigns') {
+        if ($paidOrders > 0) {
+            $whyNow = 'Уже есть оплаченные визиты, значит CRM может не просто собирать черновики, а реально возвращать гостей и повторную выручку.';
+        } elseif ($menuCount > 0 && $tablesCount > 0) {
+            $whyNow = 'Меню и QR уже готовы, значит следующим сильным шагом становится возврат гостей, а не только базовый приём заказов.';
+        }
+    } elseif ($featureKey === 'upsell' || $featureKey === 'upsell_analytics') {
+        if ($paidOrders > 0) {
+            $whyNow = 'Заказы уже идут, поэтому smart upsell может сразу работать на рост среднего чека, а не ждать следующего этапа продукта.';
+        } elseif ($menuCount > 0) {
+            $whyNow = 'Меню уже собрано, так что ресторан готов усиливать чек через логичные пары и recommendations.';
+        }
+    } elseif ($featureKey === 'loyalty') {
+        if ($paidOrders > 0) {
+            $whyNow = 'Когда уже есть оплаченные заказы, loyalty начинает работать как следующий слой удержания: бонусы, возврат и staff-assisted сценарии.';
+        } else {
+            $whyNow = 'Loyalty особенно уместна после запуска, когда базовый поток заказов уже не нужно собирать с нуля.';
+        }
+    }
+
+    $preservationText = 'Меню, столы, QR и текущие операционные настройки никуда не исчезнут — активация просто откроет growth-инструменты поверх уже настроенного ресторана.';
+    if ($paidOrders > 0) {
+        $preservationText = 'Меню, QR и уже накопленные заказы сохранятся. После активации вы просто продолжите работу с growth-инструментами без потери текущего контекста.';
+    }
+
+    $targetPlanCode = (string)$feature['plan_code'];
+    $targetPlanMeta = $catalog[$targetPlanCode] ?? null;
+
+    return [
+        'feature_key' => $featureKey,
+        'title' => (string)$feature['title'],
+        'subtitle' => (string)$feature['subtitle'],
+        'benefits' => (array)$feature['benefits'],
+        'phase_key' => $phaseKey,
+        'phase_label' => (string)$phase['label'],
+        'phase_text' => (string)$phase['text'],
+        'tone' => (string)$phase['tone'],
+        'cta_label' => (string)$phase['cta'],
+        'cta_url' => '/restaurant/activate.php?plan=' . urlencode($targetPlanCode),
+        'target_plan_code' => $targetPlanCode,
+        'target_plan_label' => (string)($feature['plan_label'] ?? strtoupper($targetPlanCode)),
+        'target_plan_name' => (string)($targetPlanMeta['name'] ?? strtoupper($targetPlanCode)),
+        'why_now' => $whyNow,
+        'proof_items' => $proofItems,
+        'preservation_text' => $preservationText,
+        'days_left' => (int)($access['days_left'] ?? 0),
+        'has_active_paid_plan' => (bool)($access['has_active_paid_plan'] ?? false),
+        'is_expired' => (bool)($access['is_expired'] ?? false),
+        'is_trial' => (bool)($access['is_trial'] ?? false),
+    ];
+}
 
 /**
  * @return array<int,array{id:int,code:string,name:string,description:?string,price_month:float,currency:string,limits_json:?array,is_active:int,sort_order:int}>
@@ -153,6 +620,10 @@ function billing_get_trial_info(int $userId, ?int $restaurantId = null): array
         'is_expired'           => false,
         'has_active_paid_plan' => false,
     ];
+    if ($restaurantId !== null && $restaurantId > 0 && function_exists('restaurant_has_full_access_override') && restaurant_has_full_access_override((int)$restaurantId)) {
+        $out['has_active_paid_plan'] = true;
+        return $out;
+    }
     if (!function_exists('schema_guard_billing_ready') || !schema_guard_billing_ready()) {
         return $out;
     }
@@ -175,7 +646,7 @@ function billing_get_trial_info(int $userId, ?int $restaurantId = null): array
                 $out['days_left'] = (int)max(0, ceil(($endTs - $now) / 86400));
             }
         } else {
-            $out['has_active_paid_plan'] = true;
+            $out['has_active_paid_plan'] = ((float)($sub['price_month'] ?? 0)) > 0 && (($sub['status'] ?? '') === 'active');
         }
     } catch (Throwable $e) {
         error_log('STABILITY_ERROR billing_get_trial_info user_id=' . $userId . ' ' . $e->getMessage());
@@ -317,7 +788,7 @@ function billing_assert_can_create_restaurant(int $ownerId, PDO $pdo): array
  * @param string $couponCode опциональный промокод
  * @return array{ok:bool,message?:string}
  */
-function billing_change_plan(int $userId, string $planCode, string $couponCode = ''): array
+function billing_change_plan(int $userId, string $planCode, string $couponCode = '', int $restaurantId = 0): array
 {
     $planCode = trim($planCode);
     $couponCode = trim($couponCode);
@@ -424,6 +895,10 @@ function billing_change_plan(int $userId, string $planCode, string $couponCode =
             if ($couponId !== null) {
                 audit_log('coupon_usage', 'coupon', (string)$couponId);
             }
+        }
+        $syncRestaurantId = $restaurantId > 0 ? $restaurantId : billing_resolve_primary_restaurant_for_owner($userId);
+        if ($syncRestaurantId > 0) {
+            billing_sync_restaurant_subscription($syncRestaurantId, (string)$plan['code'], 'active', $end);
         }
         return ['ok' => true, 'message' => 'Тариф изменён на «' . $plan['name'] . '».'];
     } catch (Throwable $e) {

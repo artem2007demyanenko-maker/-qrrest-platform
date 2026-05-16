@@ -159,7 +159,11 @@ if (!function_exists('get_restaurant_onboarding_steps')) {
         if (db_table_exists('tables')) {
             try {
                 $pdo = db();
-                $stmt = $pdo->prepare("SELECT COUNT(*) FROM tables WHERE restaurant_id = ?");
+                $stmt = $pdo->prepare("
+                    SELECT COUNT(*) FROM tables AS t
+                    WHERE t.restaurant_id = ?
+                    " . qr_public_sql_exclude_delivery($pdo, 't') . "
+                ");
                 $stmt->execute([$restaurantId]);
                 $doneMap['first_table_created'] = ((int)$stmt->fetchColumn() >= 1);
             } catch (Throwable $e) {

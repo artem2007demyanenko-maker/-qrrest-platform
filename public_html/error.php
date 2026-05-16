@@ -79,6 +79,7 @@ if ($currentRestaurant) {
     <meta charset="UTF-8">
     <title><?= e($title) ?> — QR-Restaurant Cloud</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <?= brand_head_tags() ?>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .float-slow { animation: float-slow 18s ease-in-out infinite; }

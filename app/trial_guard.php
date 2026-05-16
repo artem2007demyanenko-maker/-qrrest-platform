@@ -9,6 +9,9 @@ require_once __DIR__ . '/db.php';
 if (file_exists(__DIR__ . '/billing.php')) {
     require_once __DIR__ . '/billing.php';
 }
+if (file_exists(__DIR__ . '/restaurant_full_access.php')) {
+    require_once __DIR__ . '/restaurant_full_access.php';
+}
 
 /**
  * Whether the current user must see paywall (trial expired, no paid subscription).
@@ -18,6 +21,11 @@ function trial_guard_requires_upgrade(): bool
 {
     $user = auth_user();
     if (!$user || empty($user['id'])) {
+        return false;
+    }
+    global $currentRestaurant;
+    $restId = (int)($currentRestaurant['id'] ?? 0);
+    if ($restId > 0 && function_exists('restaurant_has_full_access_override') && restaurant_has_full_access_override($restId, is_array($currentRestaurant ?? null) ? $currentRestaurant : null)) {
         return false;
     }
     if (!function_exists('billing_trial_required_to_continue')) {
@@ -34,6 +42,11 @@ function trial_guard_trial_info(): array
     $user = auth_user();
     if (!$user || empty($user['id'])) {
         return ['is_trial' => false, 'trial_ends_at' => null, 'days_left' => 0, 'is_expired' => false, 'has_active_paid_plan' => false];
+    }
+    global $currentRestaurant;
+    $restId = (int)($currentRestaurant['id'] ?? 0);
+    if ($restId > 0 && function_exists('restaurant_has_full_access_override') && restaurant_has_full_access_override($restId, is_array($currentRestaurant ?? null) ? $currentRestaurant : null)) {
+        return ['is_trial' => false, 'trial_ends_at' => null, 'days_left' => 0, 'is_expired' => false, 'has_active_paid_plan' => true];
     }
     if (!function_exists('billing_get_trial_info')) {
         return ['is_trial' => false, 'trial_ends_at' => null, 'days_left' => 0, 'is_expired' => false, 'has_active_paid_plan' => false];

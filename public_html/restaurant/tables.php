@@ -1,9 +1,6 @@
 <?php
 
 require_once __DIR__ . '/../../app/bootstrap.php';
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
 
 require_login();
 require_current_restaurant();
@@ -12,6 +9,17 @@ require_restaurant_role((int)($currentRestaurant['id'] ?? 0), ['owner', 'admin']
 $pdo        = db();
 $errors     = [];
 $success    = null;
+$hasQrCodePathCol = function_exists('db_column_exists') && db_column_exists('tables', 'qr_code_path');
+$postAction = null;
+
+if (!empty($_SESSION['tables_flash_success'])) {
+    $success = (string)$_SESSION['tables_flash_success'];
+    unset($_SESSION['tables_flash_success']);
+}
+if (!empty($_SESSION['tables_flash_errors']) && is_array($_SESSION['tables_flash_errors'])) {
+    $errors = array_values(array_map(static fn($v) => (string)$v, $_SESSION['tables_flash_errors']));
+    unset($_SESSION['tables_flash_errors']);
+}
 
 if (empty($_SESSION['csrf'])) {
     $_SESSION['csrf'] = bin2hex(random_bytes(32));
@@ -23,6 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = 'Неверный запрос. Обновите страницу и попробуйте снова.';
     } else {
     $action = $_POST['action'] ?? '';
+    $postAction = (string)$action;
 
 
     if ($action === 'add_table') {
@@ -30,6 +39,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($name === '') {
             $errors[] = 'Введите название стола.';
+        }
+        if (!$errors && function_exists('qr_public_is_delivery_table_row') && qr_public_is_delivery_table_row(['name' => $name])) {
+            $errors[] = 'Это название зарезервировано для доставки. Выберите другое.';
         }
 
         if (!$errors) {
@@ -49,19 +61,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'id'   => $tableId,
                 'name' => $name,
             ];
-            $qrPath = generate_table_qr_image($currentRestaurant, $table);
+            try {
+                $qrPath = generate_table_qr_image($currentRestaurant, $table);
+            } catch (Throwable $e) {
+                $qrPath = '';
+                $errors[] = 'Стол создан, но QR пока не сгенерирован. Попробуйте позже.';
+                if (function_exists('error_log')) {
+                    error_log('TABLES_QR_GENERATE_ADD_FAIL rid=' . (int)$currentRestaurant['id'] . ' table=' . (int)$tableId . ' ' . $e->getMessage());
+                }
+            }
 
 
-            $stmt = $pdo->prepare("
-                UPDATE tables
-                SET qr_code_path = :qr
-                WHERE id = :id AND restaurant_id = :rest
-            ");
-            $stmt->execute([
-                'qr'   => $qrPath,
-                'id'   => $tableId,
-                'rest' => $currentRestaurant['id'],
-            ]);
+            if ($hasQrCodePathCol) {
+                $stmt = $pdo->prepare("
+                    UPDATE tables
+                    SET qr_code_path = :qr
+                    WHERE id = :id AND restaurant_id = :rest
+                ");
+                $stmt->execute([
+                    'qr'   => $qrPath,
+                    'id'   => $tableId,
+                    'rest' => $currentRestaurant['id'],
+                ]);
+            }
 
             $success = 'Стол добавлен, QR-код сгенерирован.';
             log_action(auth_user()['id'] ?? null, $currentRestaurant['id'],
@@ -79,6 +101,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($name === '') {
             $errors[] = 'Введите название стола.';
+        }
+
+        if (!$errors) {
+            $stmt = $pdo->prepare("
+                SELECT * FROM tables
+                WHERE id = :id AND restaurant_id = :rest
+                LIMIT 1
+            ");
+            $stmt->execute([
+                'id'   => $id,
+                'rest' => $currentRestaurant['id'],
+            ]);
+            $rowTbl = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($rowTbl && function_exists('qr_public_is_delivery_table_row') && qr_public_is_delivery_table_row($rowTbl)) {
+                $errors[] = 'Служебный стол доставки нельзя переименовать.';
+            }
         }
 
         if (!$errors) {
@@ -121,23 +159,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if (!$table) {
                 $errors[] = 'Стол не найден.';
+            } elseif (function_exists('qr_public_is_delivery_table_row') && qr_public_is_delivery_table_row($table)) {
+                $errors[] = 'Служебный стол доставки нельзя использовать для QR.';
             } else {
-                $qrPath = generate_table_qr_image($currentRestaurant, $table);
+                try {
+                    $qrPath = generate_table_qr_image($currentRestaurant, $table);
+                } catch (Throwable $e) {
+                    $qrPath = '';
+                    $errors[] = 'Не удалось сгенерировать QR для выбранного стола.';
+                    if (function_exists('error_log')) {
+                        error_log('TABLES_QR_GENERATE_REGEN_FAIL rid=' . (int)$currentRestaurant['id'] . ' table=' . (int)$id . ' ' . $e->getMessage());
+                    }
+                }
 
-                $stmt = $pdo->prepare("
-                    UPDATE tables
-                    SET qr_code_path = :qr
-                    WHERE id = :id AND restaurant_id = :rest
-                ");
-                $stmt->execute([
-                    'qr'   => $qrPath,
-                    'id'   => $id,
-                    'rest' => $currentRestaurant['id'],
-                ]);
+                if ($qrPath !== '' && $hasQrCodePathCol) {
+                    $stmt = $pdo->prepare("
+                        UPDATE tables
+                        SET qr_code_path = :qr
+                        WHERE id = :id AND restaurant_id = :rest
+                    ");
+                    $stmt->execute([
+                        'qr'   => $qrPath,
+                        'id'   => $id,
+                        'rest' => $currentRestaurant['id'],
+                    ]);
+                }
 
-                $success = 'QR-код перегенерирован.';
-                log_action(auth_user()['id'] ?? null, $currentRestaurant['id'],
-                    'regen_table_qr', "Стол #{$id}");
+                if ($qrPath !== '') {
+                    $success = 'QR-код перегенерирован.';
+                    log_action(auth_user()['id'] ?? null, $currentRestaurant['id'],
+                        'regen_table_qr', "Стол #{$id}");
+                }
             }
         }
     }
@@ -147,6 +199,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($id <= 0) {
             $errors[] = 'Некорректный стол.';
         }
+        if (!$errors) {
+            $stmt = $pdo->prepare("SELECT * FROM tables WHERE id = :id AND restaurant_id = :rest LIMIT 1");
+            $stmt->execute(['id' => $id, 'rest' => $currentRestaurant['id']]);
+            $delRow = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($delRow && function_exists('qr_public_is_delivery_table_row') && qr_public_is_delivery_table_row($delRow)) {
+                $errors[] = 'Служебный стол доставки нельзя удалить.';
+            }
+        }
+
         if (!$errors) {
             $stmt = $pdo->prepare("SELECT COUNT(1) FROM orders WHERE table_id = :tid AND restaurant_id = :rest");
             $stmt->execute(['tid' => $id, 'rest' => $currentRestaurant['id']]);
@@ -166,14 +227,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     }
+
+    // QR actions should return user to QR section (PRG) to avoid losing context and duplicate submissions.
+    if (in_array((string)$postAction, ['add_table', 'regen_qr'], true)) {
+        if ($success !== null && $success !== '') {
+            $_SESSION['tables_flash_success'] = $success;
+        }
+        if (!empty($errors)) {
+            $_SESSION['tables_flash_errors'] = $errors;
+        }
+        header('Location: /restaurant/tables.php#qr-cards');
+        exit;
+    }
 }
 
 
 
 $stmt = $pdo->prepare("
-    SELECT * FROM tables
-    WHERE restaurant_id = :rest
-    ORDER BY id ASC
+    SELECT * FROM tables AS t
+    WHERE t.restaurant_id = :rest
+    " . qr_public_sql_exclude_delivery($pdo, 't') . "
+    ORDER BY t.id ASC
 ");
 $stmt->execute(['rest' => $currentRestaurant['id']]);
 $tables = $stmt->fetchAll();
@@ -197,75 +271,36 @@ $restaurantBase = $protocol . '://' . $currentRestaurant['subdomain'] . '.' . $m
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-50 flex">
-<aside class="w-64 bg-slate-950/80 border-r border-slate-800 p-4 hidden md:block">
-    <?= brand_restaurant_sidebar_header_html($currentRestaurant['name']) ?>
-    <nav class="space-y-2 text-sm">
-         <a href="/restaurant/dashboard.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            Обзор
-        </a>
-        <a href="/restaurant/revenue.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            Доход
-        </a>
-        <a href="/restaurant/menu_categories.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            Категории меню
-        </a>
-        <a href="/restaurant/menu_items.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            Блюда
-        </a>
-        <a href="/restaurant/tables.php" class="block px-3 py-2 rounded-xl bg-slate-800/70">
-            Столы и QR
-        </a>
-        <a href="/restaurant/qr_print.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">QR Print</a>
-        <a href="/restaurant/tables_qr.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">QR для столов</a>
-        <a href="/restaurant/floorplan.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            Карта столов
-        </a>
-        <a href="/restaurant/orders.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            Заказы
-        </a>
-        <a href="/restaurant/feedback.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            Отзывы
-        </a>
-        <a href="/restaurant/upsells.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            Допродажи
-        </a>
-        <a href="/restaurant/upsell_rules.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            Правила допродаж
-        </a>
-        <a href="/restaurant/analytics_upsell.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            Аналитика допродаж
-        </a>
-        <a href="/restaurant/crm.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            CRM
-        </a>
-        <a href="/restaurant/crm_campaigns.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            CRM кампании
-        </a>
-        <a href="/restaurant/staff.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            Сотрудники
-        </a>
-        <a href="/restaurant/setup.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Setup</a>
-        <a href="/restaurant/settings.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">
-            Настройки
-        </a>
-        <a href="/logout.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60 text-red-300">
-            Выйти
-        </a>
-    </nav>
-</aside>
+<?php
+$restaurantSidebarActive = 'tables';
+$restaurantSidebarName = (string)($currentRestaurant['name'] ?? 'Ресторан');
+require __DIR__ . '/_sidebar_mobile.php';
+?>
+
+<?php
+require __DIR__ . '/_sidebar.php';
+?>
 
 <main class="flex-1 p-4">
     <div class="max-w-5xl mx-auto space-y-4">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-            <div>
-                <h2 class="text-2xl font-bold mb-1">Столы и QR-коды</h2>
+        <?php
+        $cabinetQuickNavActive = 'tables';
+        $operationalNavActive = 'tables';
+        require __DIR__ . '/_restaurant_cabinet_context.php';
+        require __DIR__ . '/_restaurant_cabinet_quick_nav.php';
+        require __DIR__ . '/_restaurant_operational_nav.php';
+        ?>
+        <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between border-b border-slate-800/80 pb-4">
+            <header class="min-w-0">
+                <p class="text-[11px] font-semibold uppercase tracking-wider text-emerald-500/85 mb-1">Столы</p>
+                <h1 class="text-2xl font-bold text-slate-50 mb-1">Столы и QR-коды</h1>
                 <div class="text-xs text-slate-500">
                     Гости попадают в меню по адресу:
-                    <span class="font-mono text-[11px] text-slate-200"><?= e($restaurantBase) ?>/qr.php?table_id=ID</span>
+                    <span class="font-mono text-[11px] text-slate-200 break-all"><?= e($restaurantBase) ?>/qr.php?table_id=ID</span>
                 </div>
-            </div>
+            </header>
             <a href="/restaurant/tables_qr.php"
-               class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm text-slate-100">
+               class="inline-flex items-center justify-center shrink-0 min-h-[44px] px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-medium text-slate-100 border border-slate-700 touch-manipulation">
                 QR для столов
             </a>
         </div>
@@ -304,25 +339,53 @@ $restaurantBase = $protocol . '://' . $currentRestaurant['subdomain'] . '.' . $m
         </div>
 
         <!-- Список столов -->
-        <div class="bg-slate-900/80 border border-slate-800 rounded-3xl p-4">
+        <div id="qr-cards" class="bg-slate-900/80 border border-slate-800 rounded-3xl p-4">
             <h3 class="text-lg font-semibold mb-3">Список столов</h3>
 
             <?php if (!$tables): ?>
-                <div class="rounded-xl border border-gray-800 bg-[#121826] p-8 text-center space-y-4">
+                <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-8 text-center space-y-4">
                     <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-slate-800 text-slate-400">
                         <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
                     </div>
                     <div>
-                        <h3 class="text-lg font-semibold text-[#F3F4F6]">No tables yet</h3>
-                        <p class="text-sm text-gray-400 mt-1">Create your first table to get a QR code and link for guests.</p>
+                        <h3 class="text-lg font-semibold text-slate-100">Пока нет гостевых столов</h3>
+                        <p class="text-sm text-slate-400 mt-1">Создайте стол — появится ссылка и QR для заказа в зале. Режим доставки использует отдельный сценарий без столов.</p>
                     </div>
-                    <a href="#add-table" class="inline-flex items-center px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium">Add Table</a>
+                    <a href="#add-table" class="inline-flex items-center px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-sm font-semibold">Добавить стол</a>
                 </div>
             <?php else: ?>
                 <div class="space-y-3">
                     <?php foreach ($tables as $t): ?>
                         <?php
                         $guestUrl = $restaurantBase . '/qr.php?table_id=' . urlencode($t['id']);
+                        $qrPath = $hasQrCodePathCol ? trim((string)($t['qr_code_path'] ?? '')) : '';
+                        $qrPublicPath = '';
+                        if ($qrPath !== '') {
+                            $qrPath = str_replace("\0", '', $qrPath);
+                            $qrPath = ltrim($qrPath, '/');
+                            if ($qrPath !== '' && strpos($qrPath, '..') === false && preg_match('~^qr/rest_[0-9]+_table_[0-9]+\\.png$~', $qrPath) === 1) {
+                                $candidate = __DIR__ . '/../storage/' . $qrPath;
+                                if (is_file($candidate)) {
+                                    $qrPublicPath = '/storage/' . $qrPath;
+                                }
+                            }
+                        }
+                        if ($qrPublicPath === '') {
+                            try {
+                                $generated = generate_table_qr_image($currentRestaurant, [
+                                    'id' => (int)($t['id'] ?? 0),
+                                    'name' => (string)($t['name'] ?? ''),
+                                ]);
+                                if ($generated !== '') {
+                                    $qrPublicPath = '/storage/' . ltrim($generated, '/');
+                                }
+                            } catch (Throwable $e) {
+                                if (function_exists('error_log')) {
+                                    error_log('TABLES_QR_GENERATE_RENDER_FAIL rid=' . (int)$currentRestaurant['id'] . ' table=' . (int)($t['id'] ?? 0) . ' ' . $e->getMessage());
+                                }
+                                $qrPublicPath = '';
+                            }
+                        }
                         ?>
                         <div class="flex flex-wrap gap-4 items-center justify-between bg-slate-950/80 border border-slate-800 rounded-2xl px-3 py-3">
                             <div class="flex items-center gap-3">
@@ -351,10 +414,10 @@ $restaurantBase = $protocol . '://' . $currentRestaurant['subdomain'] . '.' . $m
                                 </div>
 
                                 <div class="flex items-center gap-3">
-                                    <?php if (!empty($t['qr_code_path'])): ?>
-                                        <a href="/storage/<?= e($t['qr_code_path']) ?>" target="_blank"
+                                    <?php if ($qrPublicPath !== ''): ?>
+                                        <a href="<?= e($qrPublicPath) ?>" target="_blank"
                                            title="Открыть QR в новой вкладке">
-                                            <img src="/storage/<?= e($t['qr_code_path']) ?>"
+                                            <img src="<?= e($qrPublicPath) ?>"
                                                  alt="QR"
                                                  class="w-20 h-20 object-contain bg-slate-900 rounded-2xl border border-slate-700">
                                         </a>

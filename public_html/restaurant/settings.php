@@ -5,6 +5,9 @@ require_once __DIR__ . '/../../app/themes.php';
 require_once __DIR__ . '/../../app/yandex_review_url_validate.php';
 require_once __DIR__ . '/../../app/schema_guard.php';
 require_once __DIR__ . '/../../app/crm_repo.php';
+if (file_exists(__DIR__ . '/../../app/runtime_schema_bootstrap.php')) {
+    require_once __DIR__ . '/../../app/runtime_schema_bootstrap.php';
+}
 
 require_login();
 require_current_restaurant();
@@ -12,9 +15,30 @@ require_restaurant_role((int)($currentRestaurant['id'] ?? 0), ['owner', 'admin']
 
 $pdo    = db();
 $restId = (int)$currentRestaurant['id'];
-$restaurantsNotDeletedSql = function_exists('schema_guard_restaurants_deleted_sql')
-    ? schema_guard_restaurants_deleted_sql('')
-    : ' AND (deleted_at IS NULL)';
+if (function_exists('runtime_schema_ensure_upsell_rules')) {
+    runtime_schema_ensure_upsell_rules($pdo);
+}
+if (function_exists('runtime_schema_ensure_combo_rules')) {
+    runtime_schema_ensure_combo_rules($pdo);
+}
+if (function_exists('runtime_schema_ensure_crm_core')) {
+    runtime_schema_ensure_crm_core($pdo);
+}
+if (function_exists('runtime_schema_ensure_restaurant_crm_settings')) {
+    runtime_schema_ensure_restaurant_crm_settings($pdo);
+}
+if (function_exists('runtime_schema_ensure_restaurants_guest_upsell_split')) {
+    runtime_schema_ensure_restaurants_guest_upsell_split($pdo);
+}
+if (function_exists('runtime_schema_ensure_restaurants_combo_split')) {
+    runtime_schema_ensure_restaurants_combo_split($pdo);
+}
+$restaurantsNotDeletedSql = '';
+if (function_exists('schema_guard_restaurants_deleted_sql')) {
+    $restaurantsNotDeletedSql = schema_guard_restaurants_deleted_sql('');
+} elseif (function_exists('db_column_exists') && db_column_exists('restaurants', 'deleted_at')) {
+    $restaurantsNotDeletedSql = ' AND (deleted_at IS NULL)';
+}
 
 if (!function_exists('e')) {
     function e($v): string {
@@ -353,7 +377,12 @@ if (!function_exists('brand_upload_asset_file')) {
 $previewTableId = 0;
 if (!is_demo_mode()) {
     try {
-        $tstmt = $pdo->prepare("SELECT id FROM tables WHERE restaurant_id = :rest ORDER BY id ASC LIMIT 1");
+        $tstmt = $pdo->prepare("
+            SELECT t.id FROM tables AS t
+            WHERE t.restaurant_id = :rest
+            " . qr_public_sql_exclude_delivery($pdo, 't') . "
+            ORDER BY t.id ASC LIMIT 1
+        ");
         $tstmt->execute(['rest' => $restId]);
         $previewTableId = (int)($tstmt->fetchColumn() ?: 0);
     } catch (Throwable $e) {
@@ -389,7 +418,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($crmDays < 7 || $crmDays > 90) {
                 $errors[] = 'Укажите период от 7 до 90 дней.';
             } elseif (!function_exists('db_table_exists') || !db_table_exists('restaurant_crm_settings')) {
-                $errors[] = 'Таблица настроек CRM не найдена. Выполните миграцию restaurant_crm_settings.';
+                $errors[] = 'Расширенные настройки CRM пока недоступны. Обновите модуль CRM и повторите попытку.';
             } elseif (!function_exists('crm_upsert_restaurant_crm_settings') || !crm_upsert_restaurant_crm_settings($restId, $crmEn, $crmDays)) {
                 $errors[] = 'Не удалось сохранить настройки CRM.';
             } else {
@@ -397,23 +426,160 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
         }
-    } elseif (!empty($_POST['save_smart_upsell_guest'])) {
+    } elseif (!empty($_POST['save_smart_upsell_layers'])) {
         if (!$csrfOk) {
             $errors[] = 'Неверный запрос. Обновите страницу и попробуйте снова.';
         } elseif (function_exists('is_demo_mode') && is_demo_mode()) {
             $errors[] = 'В демо-режиме сохранение отключено.';
-        } elseif (!function_exists('db_column_exists') || !db_column_exists('restaurants', 'smart_upsell_guest_enabled')) {
-            $errors[] = 'Выполните миграцию app/migrations/2026_06_16_restaurants_smart_upsell_guest.sql (колонки smart_upsell_guest_*).';
         } else {
-            $smartEn = isset($_POST['smart_upsell_guest_enabled']) ? 1 : 0;
-            $smartMx = max(1, min(3, (int)($_POST['smart_upsell_guest_max'] ?? 3)));
+            $menuEn = isset($_POST['guest_menu_upsell_enabled']) ? 1 : 0;
+            $menuMx = max(1, min(2, (int)($_POST['guest_menu_upsell_limit'] ?? 1)));
+            $menuManualOnly = isset($_POST['guest_menu_upsell_manual_only']) ? 1 : 0;
+            $menuComboEn = isset($_POST['guest_menu_combo_enabled']) ? 1 : 0;
+            $menuComboMx = max(1, min(2, (int)($_POST['guest_menu_combo_limit'] ?? 1)));
+
+            $cartEn = isset($_POST['guest_cart_upsell_enabled']) ? 1 : 0;
+            $cartMx = max(1, min(3, (int)($_POST['guest_cart_upsell_limit'] ?? 3)));
+            $cartUseManual = isset($_POST['guest_cart_upsell_use_manual']) ? 1 : 0;
+            $cartUseContextual = isset($_POST['guest_cart_upsell_use_contextual']) ? 1 : 0;
+            $cartUsePopular = isset($_POST['guest_cart_upsell_use_popular']) ? 1 : 0;
+            $cartComboEn = isset($_POST['guest_cart_combo_enabled']) ? 1 : 0;
+            $cartComboMx = max(1, min(3, (int)($_POST['guest_cart_combo_limit'] ?? 2)));
+
+            $hasLegacyEn = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_guest_enabled');
+            $hasLegacyMax = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_guest_max');
+
+            $hasMenuEn = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_menu_upsell_enabled');
+            $hasMenuMax = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_menu_upsell_limit');
+            $hasMenuManualOnly = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_menu_upsell_manual_only');
+            $hasMenuComboEn = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_menu_combo_enabled');
+            $hasMenuComboMax = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_menu_combo_limit');
+
+            $hasCartEn = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_upsell_enabled');
+            $hasCartMax = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_upsell_limit');
+            $hasCartUseManual = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_upsell_use_manual');
+            $hasCartUseContextual = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_upsell_use_contextual');
+            $hasCartUsePopular = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_upsell_use_popular');
+            $hasCartComboEn = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_combo_enabled');
+            $hasCartComboMax = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_combo_limit');
+
+            $hasSplitSmartMenuEn = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_menu_enabled');
+            $hasSplitSmartMenuMax = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_menu_max');
+            $hasSplitSmartMenuManualOnly = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_menu_manual_only');
+            $hasSplitSmartCartEn = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_cart_enabled');
+            $hasSplitSmartCartMax = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_cart_max');
+            $hasSplitSmartCartManual = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_cart_use_manual');
+            $hasSplitSmartCartContextual = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_cart_use_contextual');
+            $hasSplitSmartCartPopular = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_cart_use_popular');
+
+            $setSql = [];
+            $params = ['id' => $restId];
+            if ($hasMenuEn) {
+                $setSql[] = 'guest_menu_upsell_enabled = :menu_en';
+                $params['menu_en'] = $menuEn;
+            }
+            if ($hasMenuMax) {
+                $setSql[] = 'guest_menu_upsell_limit = :menu_mx';
+                $params['menu_mx'] = $menuMx;
+            }
+            if ($hasMenuManualOnly) {
+                $setSql[] = 'guest_menu_upsell_manual_only = :menu_manual_only';
+                $params['menu_manual_only'] = $menuManualOnly;
+            }
+            if ($hasMenuComboEn) {
+                $setSql[] = 'guest_menu_combo_enabled = :menu_combo_en';
+                $params['menu_combo_en'] = $menuComboEn;
+            }
+            if ($hasMenuComboMax) {
+                $setSql[] = 'guest_menu_combo_limit = :menu_combo_mx';
+                $params['menu_combo_mx'] = $menuComboMx;
+            }
+            if ($hasCartEn) {
+                $setSql[] = 'guest_cart_upsell_enabled = :cart_en';
+                $params['cart_en'] = $cartEn;
+            }
+            if ($hasCartMax) {
+                $setSql[] = 'guest_cart_upsell_limit = :cart_mx';
+                $params['cart_mx'] = $cartMx;
+            }
+            if ($hasCartUseManual) {
+                $setSql[] = 'guest_cart_upsell_use_manual = :cart_manual';
+                $params['cart_manual'] = $cartUseManual;
+            }
+            if ($hasCartUseContextual) {
+                $setSql[] = 'guest_cart_upsell_use_contextual = :cart_contextual';
+                $params['cart_contextual'] = $cartUseContextual;
+            }
+            if ($hasCartUsePopular) {
+                $setSql[] = 'guest_cart_upsell_use_popular = :cart_popular';
+                $params['cart_popular'] = $cartUsePopular;
+            }
+            if ($hasCartComboEn) {
+                $setSql[] = 'guest_cart_combo_enabled = :cart_combo_en';
+                $params['cart_combo_en'] = $cartComboEn;
+            }
+            if ($hasCartComboMax) {
+                $setSql[] = 'guest_cart_combo_limit = :cart_combo_mx';
+                $params['cart_combo_mx'] = $cartComboMx;
+            }
+
+            // Keep previously introduced split smart_* columns in sync if present.
+            if ($hasSplitSmartMenuEn) {
+                $setSql[] = 'smart_upsell_menu_enabled = :split_smart_menu_en';
+                $params['split_smart_menu_en'] = $menuEn;
+            }
+            if ($hasSplitSmartMenuMax) {
+                $setSql[] = 'smart_upsell_menu_max = :split_smart_menu_mx';
+                $params['split_smart_menu_mx'] = $menuMx;
+            }
+            if ($hasSplitSmartMenuManualOnly) {
+                $setSql[] = 'smart_upsell_menu_manual_only = :split_smart_menu_manual';
+                $params['split_smart_menu_manual'] = $menuManualOnly;
+            }
+            if ($hasSplitSmartCartEn) {
+                $setSql[] = 'smart_upsell_cart_enabled = :split_smart_cart_en';
+                $params['split_smart_cart_en'] = $cartEn;
+            }
+            if ($hasSplitSmartCartMax) {
+                $setSql[] = 'smart_upsell_cart_max = :split_smart_cart_mx';
+                $params['split_smart_cart_mx'] = $cartMx;
+            }
+            if ($hasSplitSmartCartManual) {
+                $setSql[] = 'smart_upsell_cart_use_manual = :split_smart_cart_manual';
+                $params['split_smart_cart_manual'] = $cartUseManual;
+            }
+            if ($hasSplitSmartCartContextual) {
+                $setSql[] = 'smart_upsell_cart_use_contextual = :split_smart_cart_contextual';
+                $params['split_smart_cart_contextual'] = $cartUseContextual;
+            }
+            if ($hasSplitSmartCartPopular) {
+                $setSql[] = 'smart_upsell_cart_use_popular = :split_smart_cart_popular';
+                $params['split_smart_cart_popular'] = $cartUsePopular;
+            }
+
+            // Keep legacy single-layer fields in sync for old screens/fallback runtime.
+            if ($hasLegacyEn) {
+                $setSql[] = 'smart_upsell_guest_enabled = :legacy_en';
+                $params['legacy_en'] = (($menuEn === 1 || $cartEn === 1) ? 1 : 0);
+            }
+            if ($hasLegacyMax) {
+                $setSql[] = 'smart_upsell_guest_max = :legacy_mx';
+                $params['legacy_mx'] = max($menuMx, $cartMx);
+            }
+
+            if ($setSql === []) {
+                $errors[] = 'Для управления допродажами требуется обновление структуры данных.';
+            }
+
+            if ($errors === []) {
             try {
-                $u = $pdo->prepare("UPDATE restaurants SET smart_upsell_guest_enabled = :en, smart_upsell_guest_max = :mx, updated_at = NOW() WHERE id = :id{$restaurantsNotDeletedSql} LIMIT 1");
-                $u->execute(['en' => $smartEn, 'mx' => $smartMx, 'id' => $restId]);
-                header('Location: /restaurant/settings.php?smart_upsell_saved=1#smart-upsell-guest');
+                $u = $pdo->prepare("UPDATE restaurants SET " . implode(', ', $setSql) . ", updated_at = NOW() WHERE id = :id{$restaurantsNotDeletedSql} LIMIT 1");
+                $u->execute($params);
+                header('Location: /restaurant/settings.php?smart_upsell_saved=1#smart-upsell-layers');
                 exit;
             } catch (Throwable $e) {
-                $errors[] = 'Не удалось сохранить настройки умных допродаж для гостя.';
+                $errors[] = 'Не удалось сохранить настройки умных допродаж.';
+            }
             }
         }
     } elseif (!$csrfOk) {
@@ -755,9 +921,90 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['save_crm_return'])) 
     $crmFormEnabled = isset($_POST['crm_return_enabled']);
 }
 
-$smartUpsellColsOk = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_guest_enabled');
-$smartUpsellGuestEn = $smartUpsellColsOk ? ((int)($restaurantRow['smart_upsell_guest_enabled'] ?? 1) === 1) : true;
-$smartUpsellGuestMax = $smartUpsellColsOk ? max(1, min(3, (int)($restaurantRow['smart_upsell_guest_max'] ?? 3))) : 3;
+$smartUpsellLegacyEnCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_guest_enabled');
+$smartUpsellLegacyMaxCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_guest_max');
+
+$smartUpsellMenuEnCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_menu_upsell_enabled');
+$smartUpsellMenuMaxCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_menu_upsell_limit');
+$smartUpsellMenuManualOnlyCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_menu_upsell_manual_only');
+$smartUpsellMenuComboEnCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_menu_combo_enabled');
+$smartUpsellMenuComboMaxCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_menu_combo_limit');
+
+$smartUpsellCartEnCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_upsell_enabled');
+$smartUpsellCartMaxCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_upsell_limit');
+$smartUpsellCartUseManualCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_upsell_use_manual');
+$smartUpsellCartUseContextualCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_upsell_use_contextual');
+$smartUpsellCartUsePopularCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_upsell_use_popular');
+$smartUpsellCartComboEnCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_combo_enabled');
+$smartUpsellCartComboMaxCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'guest_cart_combo_limit');
+
+$smartUpsellSplitSmartMenuEnCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_menu_enabled');
+$smartUpsellSplitSmartMenuMaxCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_menu_max');
+$smartUpsellSplitSmartMenuManualOnlyCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_menu_manual_only');
+$smartUpsellSplitSmartCartEnCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_cart_enabled');
+$smartUpsellSplitSmartCartMaxCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_cart_max');
+$smartUpsellSplitSmartCartUseManualCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_cart_use_manual');
+$smartUpsellSplitSmartCartUseContextualCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_cart_use_contextual');
+$smartUpsellSplitSmartCartUsePopularCol = function_exists('db_column_exists') && db_column_exists('restaurants', 'smart_upsell_cart_use_popular');
+
+$smartUpsellMenuEnabled = $smartUpsellMenuEnCol
+    ? ((int)($restaurantRow['guest_menu_upsell_enabled'] ?? 1) === 1)
+    : ($smartUpsellSplitSmartMenuEnCol
+        ? ((int)($restaurantRow['smart_upsell_menu_enabled'] ?? 1) === 1)
+        : ($smartUpsellLegacyEnCol ? ((int)($restaurantRow['smart_upsell_guest_enabled'] ?? 1) === 1) : true));
+$smartUpsellMenuMax = $smartUpsellMenuMaxCol
+    ? max(1, min(2, (int)($restaurantRow['guest_menu_upsell_limit'] ?? 1)))
+    : ($smartUpsellSplitSmartMenuMaxCol
+        ? max(1, min(2, (int)($restaurantRow['smart_upsell_menu_max'] ?? 1)))
+        : ($smartUpsellLegacyMaxCol ? max(1, min(2, (int)($restaurantRow['smart_upsell_guest_max'] ?? 1))) : 1));
+$smartUpsellMenuManualOnly = $smartUpsellMenuManualOnlyCol
+    ? ((int)($restaurantRow['guest_menu_upsell_manual_only'] ?? 1) === 1)
+    : ($smartUpsellSplitSmartMenuManualOnlyCol
+        ? ((int)($restaurantRow['smart_upsell_menu_manual_only'] ?? 1) === 1)
+        : true);
+$smartUpsellMenuComboEnabled = $smartUpsellMenuComboEnCol
+    ? ((int)($restaurantRow['guest_menu_combo_enabled'] ?? 1) === 1)
+    : true;
+$smartUpsellMenuComboMax = $smartUpsellMenuComboMaxCol
+    ? max(1, min(2, (int)($restaurantRow['guest_menu_combo_limit'] ?? 1)))
+    : 1;
+
+$smartUpsellCartEnabled = $smartUpsellCartEnCol
+    ? ((int)($restaurantRow['guest_cart_upsell_enabled'] ?? 1) === 1)
+    : ($smartUpsellSplitSmartCartEnCol
+        ? ((int)($restaurantRow['smart_upsell_cart_enabled'] ?? 1) === 1)
+        : ($smartUpsellLegacyEnCol ? ((int)($restaurantRow['smart_upsell_guest_enabled'] ?? 1) === 1) : true));
+$smartUpsellCartMax = $smartUpsellCartMaxCol
+    ? max(1, min(3, (int)($restaurantRow['guest_cart_upsell_limit'] ?? 3)))
+    : ($smartUpsellSplitSmartCartMaxCol
+        ? max(1, min(3, (int)($restaurantRow['smart_upsell_cart_max'] ?? 3)))
+        : ($smartUpsellLegacyMaxCol ? max(1, min(3, (int)($restaurantRow['smart_upsell_guest_max'] ?? 3))) : 3));
+$smartUpsellCartUseManual = $smartUpsellCartUseManualCol
+    ? ((int)($restaurantRow['guest_cart_upsell_use_manual'] ?? 1) === 1)
+    : ($smartUpsellSplitSmartCartUseManualCol
+        ? ((int)($restaurantRow['smart_upsell_cart_use_manual'] ?? 1) === 1)
+        : true);
+$smartUpsellCartUseContextual = $smartUpsellCartUseContextualCol
+    ? ((int)($restaurantRow['guest_cart_upsell_use_contextual'] ?? 1) === 1)
+    : ($smartUpsellSplitSmartCartUseContextualCol
+        ? ((int)($restaurantRow['smart_upsell_cart_use_contextual'] ?? 1) === 1)
+        : true);
+$smartUpsellCartUsePopular = $smartUpsellCartUsePopularCol
+    ? ((int)($restaurantRow['guest_cart_upsell_use_popular'] ?? 1) === 1)
+    : ($smartUpsellSplitSmartCartUsePopularCol
+        ? ((int)($restaurantRow['smart_upsell_cart_use_popular'] ?? 1) === 1)
+        : true);
+$smartUpsellCartComboEnabled = $smartUpsellCartComboEnCol
+    ? ((int)($restaurantRow['guest_cart_combo_enabled'] ?? 1) === 1)
+    : true;
+$smartUpsellCartComboMax = $smartUpsellCartComboMaxCol
+    ? max(1, min(3, (int)($restaurantRow['guest_cart_combo_limit'] ?? 2)))
+    : 2;
+
+$smartUpsellSplitSupported = $smartUpsellMenuEnCol && $smartUpsellMenuMaxCol && $smartUpsellCartEnCol && $smartUpsellCartMaxCol;
+$smartUpsellSaveAvailable = $smartUpsellLegacyEnCol
+    || $smartUpsellMenuEnCol || $smartUpsellCartEnCol
+    || $smartUpsellSplitSmartMenuEnCol || $smartUpsellSplitSmartCartEnCol;
 
 ?>
 <!doctype html>
@@ -775,17 +1022,24 @@ $smartUpsellGuestMax = $smartUpsellColsOk ? max(1, min(3, (int)($restaurantRow['
 <?php
 $restaurantSidebarActive = 'settings';
 $restaurantSidebarName = (string)($currentRestaurant['name'] ?? 'Ресторан');
+require __DIR__ . '/_sidebar_mobile.php';
 require __DIR__ . '/_sidebar.php';
 ?>
 
 <!-- Основной контент -->
 <main class="flex-1 p-4">
     <div class="max-w-3xl mx-auto space-y-4">
-        <header class="flex flex-wrap items-center justify-between gap-3 mb-2">
-            <div>
-                <h2 class="text-2xl font-bold mb-1">Настройки ресторана</h2>
+        <?php
+        $cabinetQuickNavActive = 'settings';
+        require __DIR__ . '/_restaurant_cabinet_context.php';
+        require __DIR__ . '/_restaurant_cabinet_quick_nav.php';
+        ?>
+        <header class="flex flex-wrap items-center justify-between gap-3 mb-2 border-b border-slate-800/80 pb-4">
+            <div class="min-w-0">
+                <p class="text-[11px] font-semibold uppercase tracking-wider text-emerald-500/85 mb-1">Настройки</p>
+                <h1 class="text-2xl font-bold text-slate-50 mb-1">Настройки ресторана</h1>
                 <div class="text-xs text-slate-500">
-                    Управление основными параметрами, темой QR-меню, оплатой и контактами
+                    Основные параметры, тема QR-меню, оплата и контакты
                 </div>
             </div>
         </header>
@@ -798,7 +1052,7 @@ require __DIR__ . '/_sidebar.php';
 
         <?php if (!empty($_GET['smart_upsell_saved'])): ?>
             <div class="rounded-3xl bg-emerald-500/10 border border-emerald-500/60 px-4 py-3 text-sm text-emerald-100">
-                Настройки умных допродаж для гостя сохранены.
+                Настройки умных допродаж сохранены.
             </div>
         <?php endif; ?>
 
@@ -823,8 +1077,7 @@ require __DIR__ . '/_sidebar.php';
             </div>
             <?php if (!$crmSettingsTableOk): ?>
                 <div class="rounded-2xl bg-amber-500/10 border border-amber-500/40 px-4 py-3 text-sm text-amber-100">
-                    Таблица <code class="text-amber-200/90">restaurant_crm_settings</code> не найдена. Выполните миграцию
-                    <code class="text-amber-200/90">2026_06_15_restaurant_crm_settings.sql</code>.
+                    Расширенные настройки CRM пока недоступны. Обновите модуль CRM и повторите сохранение.
                 </div>
             <?php endif; ?>
             <form method="post" class="space-y-4">
@@ -860,47 +1113,159 @@ require __DIR__ . '/_sidebar.php';
             </form>
         </section>
 
-        <section id="smart-upsell-guest" class="space-y-4 bg-slate-900/80 border border-amber-500/20 rounded-3xl p-4 md:p-5">
+        <section id="smart-upsell-layers" class="space-y-4 bg-slate-900/80 border border-amber-500/20 rounded-3xl p-4 md:p-5">
             <div>
                 <h3 class="text-base font-semibold text-white">Умные допродажи в QR</h3>
-                <p class="text-[11px] text-slate-500 mt-1">Блок «Добавьте к заказу» в меню гостя: включение и сколько карточек показывать (1–3). Связки блюд настраиваются в разделе <a href="/restaurant/upsells.php" class="text-amber-400/90 hover:text-amber-300 underline decoration-dotted">Допродажи</a>.</p>
+                <p class="text-[11px] text-slate-500 mt-1">Раздельное управление для мягких рекомендаций в меню и более продающих рекомендаций в корзине. Ручные связки настраиваются в разделе <a href="/restaurant/upsells.php" class="text-amber-400/90 hover:text-amber-300 underline decoration-dotted">Допродажи</a>.</p>
             </div>
-            <?php if (!$smartUpsellColsOk): ?>
+            <?php if (!$smartUpsellSaveAvailable): ?>
                 <div class="rounded-2xl bg-amber-500/10 border border-amber-500/40 px-4 py-3 text-sm text-amber-100">
-                    Колонки <code class="text-amber-200/90">smart_upsell_guest_enabled</code> / <code class="text-amber-200/90">smart_upsell_guest_max</code> ещё не созданы. Выполните миграцию
-                    <code class="text-amber-200/90">2026_06_16_restaurants_smart_upsell_guest.sql</code>. До миграции используются прежние флаги <code class="text-amber-200/90">special_offers_*</code> (если есть в БД).
+                    Функция умных допродаж в QR пока недоступна. После обновления структуры данных повторите сохранение.
+                </div>
+            <?php endif; ?>
+            <?php if (!$smartUpsellSplitSupported): ?>
+                <div class="rounded-2xl bg-sky-500/10 border border-sky-500/30 px-4 py-3 text-xs text-sky-100">
+                    Сейчас работает legacy-режим совместимости: меню и корзина используют общий слой настроек. После миграции split-колонок они будут полностью независимы.
                 </div>
             <?php endif; ?>
             <form method="post" class="space-y-4">
                 <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
-                <input type="hidden" name="save_smart_upsell_guest" value="1">
-                <div class="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 space-y-4">
-                    <label class="flex items-start gap-3 cursor-pointer text-sm text-slate-200">
-                        <input type="checkbox" name="smart_upsell_guest_enabled" value="1" class="mt-1 rounded bg-slate-950 border-slate-600"
-                            <?= $smartUpsellGuestEn ? 'checked' : '' ?>
-                            <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellColsOk) ? '' : 'disabled' ?>>
-                        <span>
-                            <span class="font-medium">Показывать рекомендации гостю в QR</span>
-                            <span class="block text-[11px] text-slate-500 mt-0.5">Выключает блок в корзине и одноразовую полоску после добавления блюда (не затрагивает оформление заказа).</span>
-                        </span>
-                    </label>
-                    <div class="space-y-1">
-                        <label class="block text-xs text-slate-400" for="smart_upsell_guest_max">Максимум карточек за раз</label>
-                        <select name="smart_upsell_guest_max" id="smart_upsell_guest_max"
-                            class="w-full max-w-[200px] rounded-2xl bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-slate-50 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                            <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellColsOk) ? '' : 'disabled' ?>>
-                            <?php for ($i = 1; $i <= 3; $i++): ?>
-                                <option value="<?= $i ?>" <?= ((int)$smartUpsellGuestMax === $i) ? 'selected' : '' ?>><?= $i ?></option>
-                            <?php endfor; ?>
-                        </select>
+                <input type="hidden" name="save_smart_upsell_layers" value="1">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div class="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 space-y-4">
+                        <div>
+                            <h4 class="text-sm font-semibold text-slate-100">Upsell в меню</h4>
+                            <p class="text-[11px] text-slate-500 mt-1">Мягкие контекстные рекомендации после добавления блюда.</p>
+                        </div>
+                        <label class="flex items-start gap-3 cursor-pointer text-sm text-slate-200">
+                            <input type="checkbox" name="guest_menu_upsell_enabled" value="1" class="mt-1 rounded bg-slate-950 border-slate-600"
+                                <?= $smartUpsellMenuEnabled ? 'checked' : '' ?>
+                                <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                            <span>
+                                <span class="font-medium">Включить рекомендации в меню</span>
+                                <span class="block text-[11px] text-slate-500 mt-0.5">Показываются только после добавления блюда, без блокирующих модалок.</span>
+                            </span>
+                        </label>
+                        <div class="space-y-1">
+                            <label class="block text-xs text-slate-400" for="guest_menu_upsell_limit">Максимум рекомендаций</label>
+                            <select name="guest_menu_upsell_limit" id="guest_menu_upsell_limit"
+                                class="w-full max-w-[200px] rounded-2xl bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-slate-50 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                                <?php for ($i = 1; $i <= 2; $i++): ?>
+                                    <option value="<?= $i ?>" <?= ((int)$smartUpsellMenuMax === $i) ? 'selected' : '' ?>><?= $i ?></option>
+                                <?php endfor; ?>
+                            </select>
+                        </div>
+                        <label class="flex items-start gap-3 cursor-pointer text-sm text-slate-200">
+                            <input type="checkbox" name="guest_menu_upsell_manual_only" value="1" class="mt-1 rounded bg-slate-950 border-slate-600"
+                                <?= $smartUpsellMenuManualOnly ? 'checked' : '' ?>
+                                <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                            <span>
+                                <span class="font-medium">Только ручные связки</span>
+                                <span class="block text-[11px] text-slate-500 mt-0.5">Показывать предложения только из настроенных пар, без авто-подбора.</span>
+                            </span>
+                        </label>
+                        <label class="flex items-start gap-3 cursor-pointer text-sm text-slate-200">
+                            <input type="checkbox" name="guest_menu_combo_enabled" value="1" class="mt-1 rounded bg-slate-950 border-slate-600"
+                                <?= $smartUpsellMenuComboEnabled ? 'checked' : '' ?>
+                                <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                            <span>
+                                <span class="font-medium">Включить combo в menu upsell</span>
+                                <span class="block text-[11px] text-slate-500 mt-0.5">Подмешивать предложения из combo rules в one-tap слой.</span>
+                            </span>
+                        </label>
+                        <div class="space-y-1">
+                            <label class="block text-xs text-slate-400" for="guest_menu_combo_limit">Лимит combo-карточек</label>
+                            <select name="guest_menu_combo_limit" id="guest_menu_combo_limit"
+                                class="w-full max-w-[200px] rounded-2xl bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-slate-50 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                                <?php for ($i = 1; $i <= 2; $i++): ?>
+                                    <option value="<?= $i ?>" <?= ((int)$smartUpsellMenuComboMax === $i) ? 'selected' : '' ?>><?= $i ?></option>
+                                <?php endfor; ?>
+                            </select>
+                        </div>
                     </div>
-                    <div>
-                        <button type="submit"
-                            class="inline-flex items-center px-4 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
-                            <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellColsOk) ? '' : 'disabled' ?>>
-                            Сохранить
-                        </button>
+
+                    <div class="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 space-y-4">
+                        <div>
+                            <h4 class="text-sm font-semibold text-slate-100">Upsell в корзине</h4>
+                            <p class="text-[11px] text-slate-500 mt-1">Более сильные предложения перед checkout для роста среднего чека.</p>
+                        </div>
+                        <label class="flex items-start gap-3 cursor-pointer text-sm text-slate-200">
+                            <input type="checkbox" name="guest_cart_upsell_enabled" value="1" class="mt-1 rounded bg-slate-950 border-slate-600"
+                                <?= $smartUpsellCartEnabled ? 'checked' : '' ?>
+                                <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                            <span>
+                                <span class="font-medium">Включить рекомендации в корзине</span>
+                                <span class="block text-[11px] text-slate-500 mt-0.5">Отдельный блок «Подходит к вашему заказу» рядом с суммой и CTA оформления.</span>
+                            </span>
+                        </label>
+                        <div class="space-y-1">
+                            <label class="block text-xs text-slate-400" for="guest_cart_upsell_limit">Максимум рекомендаций</label>
+                            <select name="guest_cart_upsell_limit" id="guest_cart_upsell_limit"
+                                class="w-full max-w-[200px] rounded-2xl bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-slate-50 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                                <?php for ($i = 1; $i <= 3; $i++): ?>
+                                    <option value="<?= $i ?>" <?= ((int)$smartUpsellCartMax === $i) ? 'selected' : '' ?>><?= $i ?></option>
+                                <?php endfor; ?>
+                            </select>
+                        </div>
+                        <div class="space-y-2 text-sm">
+                            <label class="flex items-start gap-3 cursor-pointer text-slate-200">
+                                <input type="checkbox" name="guest_cart_upsell_use_manual" value="1" class="mt-1 rounded bg-slate-950 border-slate-600"
+                                    <?= $smartUpsellCartUseManual ? 'checked' : '' ?>
+                                    <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                                <span>
+                                    <span class="font-medium">Использовать ручные связки</span>
+                                    <span class="block text-[11px] text-slate-500 mt-0.5">Пары из раздела «Допродажи» (блюдо → рекомендуемое).</span>
+                                </span>
+                            </label>
+                            <label class="flex items-start gap-3 cursor-pointer text-slate-200">
+                                <input type="checkbox" name="guest_cart_upsell_use_contextual" value="1" class="mt-1 rounded bg-slate-950 border-slate-600"
+                                    <?= $smartUpsellCartUseContextual ? 'checked' : '' ?>
+                                    <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                                <span>
+                                    <span class="font-medium">Использовать contextual/category рекомендации</span>
+                                    <span class="block text-[11px] text-slate-500 mt-0.5">Автоподбор по категории, типу блюда и составу корзины.</span>
+                                </span>
+                            </label>
+                            <label class="flex items-start gap-3 cursor-pointer text-slate-200">
+                                <input type="checkbox" name="guest_cart_upsell_use_popular" value="1" class="mt-1 rounded bg-slate-950 border-slate-600"
+                                    <?= $smartUpsellCartUsePopular ? 'checked' : '' ?>
+                                    <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                                <span>
+                                    <span class="font-medium">Использовать popular fallback</span>
+                                    <span class="block text-[11px] text-slate-500 mt-0.5">Показывать популярные дополнения, если явных кандидатов мало.</span>
+                                </span>
+                            </label>
+                            <label class="flex items-start gap-3 cursor-pointer text-slate-200">
+                                <input type="checkbox" name="guest_cart_combo_enabled" value="1" class="mt-1 rounded bg-slate-950 border-slate-600"
+                                    <?= $smartUpsellCartComboEnabled ? 'checked' : '' ?>
+                                    <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                                <span>
+                                    <span class="font-medium">Включить combo в cart upsell</span>
+                                    <span class="block text-[11px] text-slate-500 mt-0.5">Отдельный источник рекомендаций из combo rules в корзине.</span>
+                                </span>
+                            </label>
+                            <div class="space-y-1">
+                                <label class="block text-xs text-slate-400" for="guest_cart_combo_limit">Лимит combo-карточек</label>
+                                <select name="guest_cart_combo_limit" id="guest_cart_combo_limit"
+                                    class="w-full max-w-[200px] rounded-2xl bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-slate-50 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                    <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                                    <?php for ($i = 1; $i <= 3; $i++): ?>
+                                        <option value="<?= $i ?>" <?= ((int)$smartUpsellCartComboMax === $i) ? 'selected' : '' ?>><?= $i ?></option>
+                                    <?php endfor; ?>
+                                </select>
+                            </div>
+                        </div>
                     </div>
+                </div>
+                <div>
+                    <button type="submit"
+                        class="inline-flex items-center px-4 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+                        <?= ((!function_exists('is_demo_mode') || !is_demo_mode()) && $smartUpsellSaveAvailable) ? '' : 'disabled' ?>>
+                        Сохранить настройки допродаж
+                    </button>
                 </div>
             </form>
         </section>

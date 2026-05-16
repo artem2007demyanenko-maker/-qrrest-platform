@@ -105,9 +105,15 @@ foreach ($orders as $o) {
     $createdTs = strtotime($o['created_at'] ?? '');
     $sinceMinutes = $createdTs ? max(0, (int)floor(($now - $createdTs) / 60)) : 0;
 
+    $rk = (string)($o['table_name'] ?? '');
+    $rkLabel = function_exists('qr_public_owner_order_table_label') ? qr_public_owner_order_table_label($rk) : $rk;
+    if ($rkLabel === '') {
+        $rkLabel = 'Стол #' . (int)$o['table_id'];
+    }
+
     $result[] = [
         'id'               => $oid,
-        'table_name'       => $o['table_name'] ?? ('Table ' . (int)$o['table_id']),
+        'table_name'       => $rkLabel,
         'order_status'     => $o['order_status'],
         'created_at'       => $o['created_at'],
         'created_at_short' => date('H:i', $createdTs ?: time()),

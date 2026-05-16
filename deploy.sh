@@ -252,7 +252,24 @@ else
     -e "ssh ${SSH_OPTS[*]}" \
     "$LOCAL_PROJECT_DIR/" \
     "$REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/"
-fi
+  fi
+
+echo "🔐 Фиксирую права на сервере..."
+
+ssh root@178.159.94.192 "
+  set -e
+
+  find /opt/qr-rest/app -type d -exec chmod 755 {} \;
+  find /opt/qr-rest/app -type f -exec chmod 644 {} \;
+
+  find /opt/qr-rest/public_html -type d -exec chmod 755 {} \;
+  find /opt/qr-rest/public_html -type f -exec chmod 644 {} \;
+
+  find /opt/qr-rest/public_html -name '.htaccess' -exec chmod 644 {} \;
+"
+
+echo "✅ Права исправлены"
+
 
 #######################################
 # RESTART
@@ -262,7 +279,7 @@ if [[ "$MODE" != "dry-run" && "$RESTART_APP" == "1" ]]; then
   echo "🔄 Перезапускаю app-контейнер..."
   ssh "${SSH_OPTS[@]}" "$REMOTE_USER@$REMOTE_HOST" "
     cd '$REMOTE_PATH' &&
-    docker-compose --env-file .env.production -f docker-compose.prod.yml restart app
+    docker compose --env-file .env.production -f docker-compose.prod.yml restart app
   "
   echo "✅ app-контейнер перезапущен"
 fi

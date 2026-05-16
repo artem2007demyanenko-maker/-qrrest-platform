@@ -121,13 +121,17 @@ function get_recent_restaurant_feedback(int $restaurantId, int $limit = 5): arra
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         return array_map(static function (array $r): array {
+            $tn = isset($r['table_name']) && $r['table_name'] !== '' ? (string)$r['table_name'] : null;
+            if ($tn !== null && function_exists('qr_public_owner_order_table_label')) {
+                $tn = qr_public_owner_order_table_label($tn);
+            }
             return [
                 'id' => (int)($r['id'] ?? 0),
                 'rating' => (int)($r['rating'] ?? 0),
                 'comment' => isset($r['comment']) && $r['comment'] !== '' ? (string)$r['comment'] : null,
                 'created_at' => (string)($r['created_at'] ?? ''),
                 'order_id' => (int)($r['order_id'] ?? 0),
-                'table_name' => isset($r['table_name']) && $r['table_name'] !== '' ? (string)$r['table_name'] : null,
+                'table_name' => ($tn !== null && $tn !== '') ? $tn : null,
             ];
         }, $rows);
     } catch (Throwable $e) {

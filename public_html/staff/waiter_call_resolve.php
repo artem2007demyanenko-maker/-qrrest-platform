@@ -3,28 +3,17 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../app/bootstrap.php';
-
-require_login();
+require_once __DIR__ . '/../../app/waiter_calls.php';
 
 header('Content-Type: application/json; charset=utf-8');
-
-if (!$currentRestaurant) {
-    echo json_encode(['success' => false, 'message' => 'Контекст ресторана не найден'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
+require_waiter_access();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['success' => false, 'message' => 'Метод не поддерживается'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-if (!function_exists('require_restaurant_role')) {
-    echo json_encode(['success' => false, 'message' => 'Ошибка проверки доступа'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
 $restaurantId = (int)($currentRestaurant['id'] ?? 0);
-require_restaurant_role($restaurantId, ['staff', 'admin', 'owner']);
 
 $pdo = db();
 if (!$pdo instanceof PDO) {
@@ -50,28 +39,10 @@ if ($waiterCallId <= 0) {
     exit;
 }
 
-if (file_exists(__DIR__ . '/../../app/schema_guard.php')) {
-    require_once __DIR__ . '/../../app/schema_guard.php';
-}
-
-// Ensure table exists (best-effort).
-try {
-    if (!function_exists('db_table_exists') || !db_table_exists('waiter_calls')) {
-        $pdo->exec("
-            CREATE TABLE IF NOT EXISTS waiter_calls (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                restaurant_id INT NOT NULL,
-                table_id INT NOT NULL,
-                order_id INT NULL,
-                status VARCHAR(20) NOT NULL DEFAULT 'active',
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                resolved_at DATETIME NULL,
-                KEY idx_rest_table (restaurant_id, table_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        ");
-    }
-} catch (Throwable $e) {
-    // ignore
+if (!waiter_calls_require_table()) {
+    http_response_code(503);
+    echo json_encode(['success' => false, 'message' => 'Функция временно недоступна'], JSON_UNESCAPED_UNICODE);
+    exit;
 }
 
 try {
@@ -112,4 +83,3 @@ try {
     echo json_encode(['success' => false, 'message' => 'Ошибка при обработке вызова'], JSON_UNESCAPED_UNICODE);
     exit;
 }
-

@@ -1,5 +1,6 @@
 import { expect, expectJsonResponseHealthy, loginAs, test } from './fixtures';
 import { barCredentials, coldCredentials } from './config';
+import { skipOrFail } from './test-helpers';
 
 function firstForeignItemId(payload: unknown, forbiddenStation: string): number | null {
   if (!payload || typeof payload !== 'object') return null;
@@ -21,14 +22,14 @@ function firstForeignItemId(payload: unknown, forbiddenStation: string): number 
 
 test.describe('KDS station security guards', () => {
   test('bar account cannot update a cold station item when one is visible to cold API', async ({ page }) => {
-    test.skip(!barCredentials || !coldCredentials, 'Set QRREST_BAR_* and QRREST_COLD_* credentials to run cross-station security smoke checks.');
+    skipOrFail(test.skip, !barCredentials || !coldCredentials, 'Set QRREST_BAR_* and QRREST_COLD_* credentials to run cross-station security smoke checks.');
 
     await loginAs(page, coldCredentials!);
     const coldPayload = await expectJsonResponseHealthy(
       await page.request.get('/staff/kitchen_api.php?status=all&station=cold')
     );
     const coldItemId = firstForeignItemId(coldPayload, 'cold');
-    test.skip(!coldItemId, 'No cold item is currently available to validate cross-station update denial.');
+    skipOrFail(test.skip, !coldItemId, 'No cold item is currently available to validate cross-station update denial.');
 
     await loginAs(page, barCredentials!);
     const response = await page.request.post('/staff/kitchen_item_update.php', {

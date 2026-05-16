@@ -39,7 +39,12 @@ if ($restId > 0 && function_exists('onboarding_progress_mark_visited_qr_print'))
     onboarding_progress_mark_visited_qr_print($restId);
 }
 
-$stmt = $pdo->prepare("SELECT id, name FROM tables WHERE restaurant_id = ? ORDER BY name");
+$stmt = $pdo->prepare("
+    SELECT t.id, t.name FROM tables AS t
+    WHERE t.restaurant_id = ?
+    " . qr_public_sql_exclude_delivery($pdo, 't') . "
+    ORDER BY t.name
+");
 $stmt->execute([$restId]);
 $tables = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -67,6 +72,11 @@ $qrBase = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=';
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-50">
 <div class="min-h-screen flex flex-col">
+    <?php
+    $restaurantSidebarActive = 'qr_print';
+    $restaurantSidebarName = (string)($currentRestaurant['name'] ?? 'Ресторан');
+    require __DIR__ . '/_sidebar_mobile.php';
+    ?>
     <header class="no-print p-4 border-b border-slate-800 flex items-center justify-between">
         <h1 class="text-xl font-semibold">QR-коды столов</h1>
         <div class="flex items-center gap-2">
@@ -76,24 +86,24 @@ $qrBase = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=';
         </div>
     </header>
 
+    <?php
+    $restaurantSidebarActive = 'qr_print';
+    $restaurantSidebarName = (string)($currentRestaurant['name'] ?? 'Ресторан');
+    $restaurantSidebarNavClass = 'space-y-2 text-sm';
+    ?>
     <aside class="no-print w-64 bg-slate-950/80 border-r border-slate-800 p-4 hidden md:block fixed left-0 top-0 bottom-0">
-        <h2 class="text-lg font-semibold mb-4"><?= e($currentRestaurant['name']) ?></h2>
-        <nav class="space-y-2 text-sm">
-            <a href="/restaurant/dashboard.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Обзор</a>
-            <a href="/restaurant/revenue.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Доход</a>
-            <a href="/restaurant/menu_categories.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Категории меню</a>
-            <a href="/restaurant/menu_items.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Блюда</a>
-            <a href="/restaurant/tables.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Столы и QR</a>
-            <a href="/restaurant/qr_print.php" class="block px-3 py-2 rounded-xl bg-slate-800/70">QR Print</a>
-            <a href="/restaurant/setup.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Setup</a>
-            <a href="/restaurant/floorplan.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Карта столов</a>
-            <a href="/restaurant/orders.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Заказы</a>
-            <a href="/restaurant/settings.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Настройки</a>
-            <a href="/logout.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60 text-red-300">Выйти</a>
-        </nav>
+        <?= brand_restaurant_sidebar_header_html($restaurantSidebarName) ?>
+        <?php require __DIR__ . '/_sidebar_nav.php'; ?>
     </aside>
 
     <main class="flex-1 p-4 md:pl-72 pt-20 md:pt-4">
+        <div class="no-print">
+            <?php
+            $operationalNavActive = 'qr_print';
+            require __DIR__ . '/_restaurant_cabinet_context.php';
+            require __DIR__ . '/_restaurant_operational_nav.php';
+            ?>
+        </div>
         <?php if (empty($tables)): ?>
             <p class="text-slate-400">Нет столов. <a href="/restaurant/tables.php" class="text-sky-300 hover:underline">Добавить столы</a>.</p>
         <?php else: ?>

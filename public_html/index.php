@@ -6,10 +6,15 @@ $pdo  = db();
 $user = auth_user();
 
 $ldConfig = require __DIR__ . '/../app/config.php';
-$ldBase = rtrim((string)($ldConfig['app']['url'] ?? ''), '/');
+$ldBase = function_exists('brand_current_origin')
+    ? rtrim((string)brand_current_origin($ldConfig), '/')
+    : rtrim((string)($ldConfig['app']['url'] ?? ''), '/');
 if ($ldBase === '') {
     $ldBase = ($ldConfig['app']['protocol'] ?? 'https') . '://' . ($ldConfig['app']['main_domain'] ?? 'qrrest-menu.ru');
-} 
+}
+$hostNoPort = strtolower((string)preg_replace('/:\d+$/', '', (string)($_SERVER['HTTP_HOST'] ?? '')));
+$mainDomain = strtolower((string)($ldConfig['app']['main_domain'] ?? ''));
+$isTestHost = $mainDomain !== '' && $hostNoPort === ('test.' . $mainDomain);
 
 
 if ($currentRestaurant && !$user && !empty($currentRestaurant['public_home_enabled'])) {
@@ -30,6 +35,30 @@ if (is_file($configPath)) {
 
 $user = function_exists('auth_user') ? auth_user() : null;
 
+$platProtocol = $ldConfig['app']['protocol'] ?? 'https';
+$platMainDomain = strtolower((string)($ldConfig['app']['main_domain'] ?? 'qrrest-menu.ru'));
+
+$publicRestaurants = [];
+if ($pdo instanceof PDO) {
+    try {
+        require_once __DIR__ . '/../app/schema_guard.php';
+        $rStatusCond = (function_exists('db_column_exists') && db_column_exists('restaurants', 'status')) ? " AND r.status = 'active'" : '';
+        $deletedSql = function_exists('schema_guard_restaurants_deleted_sql') ? schema_guard_restaurants_deleted_sql('r') : '';
+        $stmt = $pdo->prepare("
+            SELECT r.id, r.name, r.subdomain
+            FROM restaurants r
+            WHERE r.subdomain IS NOT NULL AND TRIM(r.subdomain) <> ''
+            {$rStatusCond}
+            {$deletedSql}
+            ORDER BY r.name ASC
+            LIMIT 24
+        ");
+        $stmt->execute();
+        $publicRestaurants = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        $publicRestaurants = [];
+    }
+}
 
 function h($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
@@ -44,16 +73,21 @@ function h($v): string {
   "@type": "Organization",
   "name": <?= json_encode(BRAND_NAME, JSON_UNESCAPED_UNICODE) ?>,
   "url": <?= json_encode($ldBase . '/', JSON_UNESCAPED_SLASHES) ?>,
-  "logo": <?= json_encode($ldBase . '/assets/brand/apple-touch-icon.png', JSON_UNESCAPED_SLASHES) ?>
+  "logo": <?= json_encode($ldBase . brand_logo_path_for_schema(), JSON_UNESCAPED_SLASHES) ?>
 }
 </script>
     <meta charset="UTF-8">
     <title><?= h(BRAND_NAME) ?> — облачная QR-система для ресторанов</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <?php if ($isTestHost): ?>
+        <meta name="robots" content="noindex,nofollow,noarchive">
+    <?php endif; ?>
     <?= brand_head_tags() ?>
     <meta name="description"
           content="Облачная QR-платформа для ресторанов: меню, заказы и оплата. Подписка для одиночных ресторанов и сетей.">
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/assets/css/atmosphere.css">
+    <link rel="stylesheet" href="/assets/css/preloader.css">
     <style>
         .float-slow { animation: float-slow 12s ease-in-out infinite; }
         .float-slow-2 { animation: float-slow-2 18s ease-in-out infinite; }
@@ -71,9 +105,18 @@ function h($v): string {
             0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.0); }
             50%      { box-shadow: 0 0 42px 0 rgba(52, 211, 153, 0.35); }
         }
+        @media (prefers-reduced-motion: reduce) {
+            .float-slow, .float-slow-2, .glow-pulse { animation: none !important; }
+        }
     </style>
 </head>
-<body class="min-h-screen bg-slate-950 text-slate-50">
+<body class="min-h-screen bg-slate-950 text-slate-50 overflow-x-hidden preloader-active">
+<div class="qr-preloader" id="qr-preloader" data-qr-preloader aria-hidden="true">
+    <canvas class="qr-preloader__canvas" data-preloader-canvas></canvas>
+    <div class="qr-preloader__fallback" data-preloader-fallback>
+        <img src="/assets/img/logo-qrrest.png" alt="QRRest" width="120" height="40">
+    </div>
+</div>
 <div class="min-h-screen relative overflow-hidden">
 
     <!-- Градиенты фона -->
@@ -92,6 +135,9 @@ function h($v): string {
             </div>
 
             <nav class="hidden md:flex items-center gap-6 text-xs text-slate-300">
+                <?php if ($publicRestaurants): ?>
+                    <a href="#venues" class="hover:text-emerald-300 transition">Рестораны</a>
+                <?php endif; ?>
                 <a href="#how" class="hover:text-emerald-300 transition">Как это работает</a>
                 <a href="#pricing" class="hover:text-emerald-300 transition">Тарифы</a>
                 <a href="#roles" class="hover:text-emerald-300 transition">Для кого</a>
@@ -125,20 +171,19 @@ function h($v): string {
                 <div class="space-y-6">
                     <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-[11px] text-emerald-100">
                         <span class="w-4 h-4 rounded-full bg-emerald-400 text-[10px] flex items-center justify-center text-slate-950 font-bold">QR</span>
-                        <span>Облачная система заказов по подписке для ресторанов</span>
+                        <span>Заказ в зале по QR и доставка с поддомена — одна платформа</span>
                     </div>
 
-                    <h1 class="text-3xl sm:text-4xl lg:text-5xl font-semibold leading-tight">
-                        Современное QR-меню
+                    <h1 class="text-3xl sm:text-4xl lg:text-5xl font-semibold leading-tight tracking-tight">
+                        QR-меню, заказ к столу и доставка
                         <span class="block text-transparent bg-clip-text bg-gradient-to-r from-emerald-300 via-sky-300 to-emerald-100">
-                            с оплатой и панелями для команды
+                            в единой облачной системе для ресторана
                         </span>
                     </h1>
 
-                    <p class="text-sm sm:text-base text-slate-300 max-w-xl">
-                        Гости сканируют QR-код, собирают заказ в красивом мобильном меню и оплачивают.
-                        Кухня и зал работают в живой панели с уведомлениями. Ресторан платит по удобной подписке
-                        за подключение к платформе.
+                    <p class="text-sm sm:text-base text-slate-300 max-w-xl leading-relaxed">
+                        Гости сканируют QR у стола или открывают меню доставки по ссылке — собирают заказ, оплачивают удобным способом.
+                        Кухня и зал видят ленту в реальном времени, владелец — выручку и статистику. Подписка на подключение к платформе без скрытых процентов с оборота.
                     </p>
 
                     <div class="flex flex-wrap gap-3">
@@ -150,6 +195,12 @@ function h($v): string {
                            class="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-900/80 border border-slate-700 text-sm text-slate-100 hover:bg-slate-800 transition">
                             💳 Посмотреть тарифы
                         </a>
+                        <?php if ($publicRestaurants): ?>
+                            <a href="#venues"
+                               class="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl border border-emerald-500/35 text-sm text-emerald-100 hover:bg-emerald-500/10 transition sm:w-auto w-full justify-center">
+                                🍽 Рестораны на платформе
+                            </a>
+                        <?php endif; ?>
                     </div>
 
                     <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-[11px] text-slate-400 pt-2">
@@ -158,8 +209,8 @@ function h($v): string {
                             <span>Подходит и для одного ресторана, и для сети</span>
                         </div>
                         <div class="flex items-center gap-2">
-                            <span class="w-6 h-6 rounded-xl bg-slate-900/80 border border-slate-700 flex items-center justify-center text-sky-300">QR</span>
-                            <span>Отдельный поддомен и QR-коды для каждого заведения</span>
+                            <span class="w-6 h-6 rounded-xl bg-slate-900/80 border border-slate-700 flex items-center justify-center text-sky-300">🛵</span>
+                            <span>Доставка и зал — разные сценарии, один визуальный стиль меню</span>
                         </div>
                         <div class="flex items-center gap-2">
                             <span class="w-6 h-6 rounded-xl bg-slate-900/80 border border-slate-700 flex items-center justify-center text-fuchsia-300">₽</span>
@@ -253,6 +304,60 @@ function h($v): string {
                         </div>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <section id="venues" class="max-w-6xl mx-auto px-4 py-8 sm:py-10">
+            <div class="rounded-[2rem] border border-slate-800/90 bg-slate-950/80 backdrop-blur-xl shadow-2xl shadow-slate-950/80 p-5 sm:p-8">
+                <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-6">
+                    <div class="space-y-2 max-w-2xl">
+                        <div class="inline-flex items-center gap-2 rounded-full bg-slate-900/90 border border-slate-700 px-3 py-1 text-[11px] text-slate-300">
+                            <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                            Рестораны на платформе
+                        </div>
+                        <h2 class="text-xl sm:text-2xl font-semibold text-slate-50">Живые меню и доставка</h2>
+                        <p class="text-sm text-slate-400 leading-relaxed">
+                            Откройте меню доставки на поддомене заведения (без привязки к столу) или подключите свой ресторан — гости увидят тот же продуктовый интерфейс.
+                        </p>
+                    </div>
+                    <a href="#contact"
+                       class="inline-flex items-center justify-center gap-2 self-start lg:self-auto px-4 py-2.5 rounded-2xl bg-slate-900 border border-slate-700 text-xs font-semibold text-slate-100 hover:border-emerald-500/50 hover:text-emerald-100 transition whitespace-nowrap">
+                        Подключить ресторан
+                    </a>
+                </div>
+
+                <?php if ($publicRestaurants): ?>
+                    <div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
+                        <?php foreach ($publicRestaurants as $pr): ?>
+                            <?php
+                            $sub = strtolower(trim((string)($pr['subdomain'] ?? '')));
+                            if ($sub === '') {
+                                continue;
+                            }
+                            $venueUrl = h($platProtocol . '://' . $sub . '.' . $platMainDomain . '/qr.php');
+                            ?>
+                            <a href="<?= $venueUrl ?>"
+                               target="_blank" rel="noopener noreferrer"
+                               class="group flex flex-col rounded-2xl border border-slate-800 bg-slate-900/60 hover:border-emerald-500/45 hover:bg-slate-900/90 transition p-4 min-h-[5.5rem] break-words">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div class="min-w-0 [overflow-wrap:anywhere]">
+                                        <div class="text-[11px] uppercase tracking-[0.16em] text-slate-500">Меню</div>
+                                        <div class="mt-1 text-base font-semibold text-slate-50 group-hover:text-emerald-100 transition truncate">
+                                            <?= h($pr['name'] ?? '') ?>
+                                        </div>
+                                        <div class="mt-2 text-[11px] text-slate-500 truncate"><?= h($sub) ?>.<?= h($platMainDomain) ?></div>
+                                    </div>
+                                    <span class="shrink-0 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 text-slate-400 group-hover:border-emerald-500/50 group-hover:text-emerald-200 text-lg" aria-hidden="true">→</span>
+                                </div>
+                                <div class="mt-3 text-[11px] text-emerald-300/90">Открыть доставку / меню без стола</div>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                <?php else: ?>
+                    <div class="rounded-2xl border border-dashed border-slate-700 bg-slate-900/40 px-4 py-6 text-center text-sm text-slate-400">
+                        Список подключённых ресторанов появится здесь по мере запуска площадок. Пока можно оставить заявку ниже — поможем с подключением и настройкой.
+                    </div>
+                <?php endif; ?>
             </div>
         </section>
 
@@ -582,5 +687,6 @@ function h($v): string {
         </footer>
     </main>
 </div>
+<script src="/assets/js/qr-particle-loader.js"></script>
 </body>
 </html>

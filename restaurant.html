@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Меню ресторана</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <main class="container restaurant-page">
+    <h1 id="restaurant-title">Меню ресторана Тестовый ресторан</h1>
+    <p class="subtitle">Тестовое меню с фронтенд-корзиной (демо).</p>
+
+    <!--
+      TODO (backend/KDS):
+      Здесь будет интеграция с backend:
+      - отправка заказа на API
+      - статус заказа
+      - маршрутизация заказа в KDS/кухню
+    -->
+    <!--
+      TODO (QR/NFC):
+      Здесь будет привязка стола к заказу через QR/NFC:
+      - генерация QR/NFC меток для столов
+      - передача table_id в checkout
+    -->
+
+    <div class="restaurant-layout">
+      <section class="menu-section" aria-labelledby="menu-title">
+        <h2 id="menu-title">Меню</h2>
+        <div id="menu-categories" class="menu-categories"></div>
+      </section>
+
+      <aside class="cart-section" aria-labelledby="cart-title">
+        <h2 id="cart-title">Корзина</h2>
+        <p class="subtitle">Проверьте заказ перед отправкой</p>
+        <div id="cart-items" class="cart-items"></div>
+        <div class="cart-summary">
+          <span>Итоговая сумма:</span>
+          <strong id="cart-total">0 ₽</strong>
+        </div>
+        <button id="clear-cart-btn" class="btn btn-secondary" type="button">Очистить корзину</button>
+
+        <section class="loyalty-section" aria-labelledby="loyalty-title">
+          <h3 id="loyalty-title">Программа лояльности</h3>
+          <p class="subtitle">Введите номер телефона, чтобы сохранить бонусы за этот заказ в этом ресторане.</p>
+          <label class="form-label" for="loyalty-phone">Телефон для бонусов</label>
+          <input id="loyalty-phone" class="form-input" type="tel" placeholder="+7 (___) ___-__-__">
+          <p class="loyalty-note">Войдите по SMS в меню — номер подставится автоматически, а бонусы начислим после подтвержденной оплаты.</p>
+        </section>
+
+        <form id="checkout-form" class="checkout-form" novalidate>
+          <h3>Оформление заказа</h3>
+
+          <label class="form-label" for="order-type">Тип заказа</label>
+          <select id="order-type" class="form-input" name="order_type">
+            <option value="hall">Зал</option>
+            <option value="delivery">Доставка</option>
+            <option value="table">Стол (QR)</option>
+          </select>
+
+          <label class="form-label" for="guest-name">Имя гостя</label>
+          <input id="guest-name" class="form-input" name="guest_name" type="text" placeholder="Введите имя" required>
+
+          <label class="form-label" for="guest-phone">Телефон</label>
+          <input id="guest-phone" class="form-input" name="guest_phone" type="tel" placeholder="+7 (___) ___-__-__" required>
+
+          <div id="table-field-wrap">
+            <label class="form-label" for="table-id">Номер стола</label>
+            <input id="table-id" class="form-input" name="table_id" type="text" placeholder="Например: 7">
+          </div>
+
+          <div id="address-field-wrap" class="hidden">
+            <label class="form-label" for="guest-address">Адрес доставки</label>
+            <input id="guest-address" class="form-input" name="guest_address" type="text" placeholder="Улица, дом, квартира">
+          </div>
+
+          <label class="form-label" for="order-comments">Комментарий к заказу</label>
+          <textarea id="order-comments" class="form-input form-textarea" name="order_comments" rows="3" placeholder="Например: без лука, позвонить за 10 минут"></textarea>
+
+          <p id="checkout-error" class="form-error hidden" role="alert"></p>
+          <p id="checkout-success" class="form-success hidden" role="status"></p>
+          <div id="checkout-send-error-wrap" class="send-error-wrap hidden" role="alert">
+            <span id="checkout-send-error" class="send-error-text"></span>
+            <button id="retry-order-btn" class="btn btn-secondary retry-btn" type="button">Повторить отправку</button>
+          </div>
+
+          <button id="submit-order-btn" class="btn btn-primary btn-submit" type="submit">Оформить заказ</button>
+        </form>
+
+        <div class="payload-preview">
+          <h3>JSON payload (preview)</h3>
+          <pre id="payload-output">Пока пусто. Добавьте блюда и оформите заказ.</pre>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

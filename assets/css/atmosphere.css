@@ -1,0 +1,45 @@
+/* Subtle animated backdrop for marketing/public pages (no JS). */
+
+.qr-atmosphere {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.qr-atmosphere::before,
+.qr-atmosphere::after {
+  content: '';
+  position: absolute;
+  inset: -20%;
+  background:
+    radial-gradient(closest-side at 20% 20%, rgba(52, 211, 153, 0.16), transparent 60%),
+    radial-gradient(closest-side at 80% 10%, rgba(56, 189, 248, 0.14), transparent 58%),
+    radial-gradient(closest-side at 60% 85%, rgba(167, 139, 250, 0.12), transparent 62%);
+  filter: blur(42px);
+  opacity: 0.85;
+  transform: translate3d(0, 0, 0);
+}
+
+.qr-atmosphere::after {
+  mix-blend-mode: screen;
+  animation: qr-atmosphere-drift 22s ease-in-out infinite;
+  opacity: 0.55;
+}
+
+@keyframes qr-atmosphere-drift {
+  0%,
+  100% {
+    transform: translate3d(-2%, -1%, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(2%, 2%, 0) scale(1.03);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qr-atmosphere::after {
+    animation: none;
+  }
+}

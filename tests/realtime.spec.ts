@@ -1,12 +1,12 @@
 import { expect, expectJsonResponseHealthy, expectNoServerErrors, expectPageHealthy, loginAs, test, visitReadOnly, waitForJsonPolling } from './fixtures';
 import { barCredentials, coldCredentials, ownerCredentials, staffCredentials, waiterCredentials } from './config';
-import { expectNoRuntimeText } from './test-helpers';
+import { expectNoRuntimeText, skipOrFail } from './test-helpers';
 
 test.describe('Realtime and polling smoke checks', () => {
   test('KDS polling request is observed and returns JSON', async ({ page, diagnostics }) => {
     const credentials = coldCredentials || barCredentials || ownerCredentials;
     const station = coldCredentials ? 'cold' : (barCredentials ? 'bar' : 'all');
-    test.skip(!credentials, 'Set station or owner credentials to run KDS polling smoke checks.');
+    skipOrFail(test.skip, !credentials, 'Set station or owner credentials to run KDS polling smoke checks.');
 
     await loginAs(page, credentials!);
     const polling = waitForJsonPolling(page, /\/staff\/kitchen_api\.php/i).catch(() => null);
@@ -21,7 +21,7 @@ test.describe('Realtime and polling smoke checks', () => {
 
   test('staff orders polling endpoint responds with JSON', async ({ page }) => {
     const credentials = waiterCredentials || staffCredentials || ownerCredentials;
-    test.skip(!credentials, 'Set staff/waiter/owner credentials to run orders polling smoke checks.');
+    skipOrFail(test.skip, !credentials, 'Set staff/waiter/owner credentials to run orders polling smoke checks.');
 
     await loginAs(page, credentials!);
     const response = await page.request.get('/staff/orders_api.php');
@@ -32,7 +32,7 @@ test.describe('Realtime and polling smoke checks', () => {
 
   test('floorplan polling endpoint responds safely', async ({ page }) => {
     const credentials = waiterCredentials || staffCredentials || ownerCredentials;
-    test.skip(!credentials, 'Set staff/waiter/owner credentials to run floorplan polling smoke checks.');
+    skipOrFail(test.skip, !credentials, 'Set staff/waiter/owner credentials to run floorplan polling smoke checks.');
 
     await loginAs(page, credentials!);
     const response = await page.request.get('/staff/floorplan_api.php');
@@ -43,7 +43,7 @@ test.describe('Realtime and polling smoke checks', () => {
 
   test('unsafe kitchen item update without POST is rejected without 500', async ({ page }) => {
     const credentials = coldCredentials || barCredentials || ownerCredentials;
-    test.skip(!credentials, 'Set station or owner credentials to run item update guard smoke checks.');
+    skipOrFail(test.skip, !credentials, 'Set station or owner credentials to run item update guard smoke checks.');
 
     await loginAs(page, credentials!);
     const response = await page.request.get('/staff/kitchen_item_update.php');

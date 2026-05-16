@@ -131,11 +131,15 @@ function demo_revenue_stats(): array
 function demo_menu_categories(): array
 {
     return [
-        ['id' => 1, 'name' => 'Закуски', 'sort_order' => 1],
-        ['id' => 2, 'name' => 'Салаты и супы', 'sort_order' => 2],
-        ['id' => 3, 'name' => 'Основные блюда', 'sort_order' => 3],
-        ['id' => 4, 'name' => 'Десерты', 'sort_order' => 4],
-        ['id' => 5, 'name' => 'Напитки и кофе', 'sort_order' => 5],
+        ['id' => 1, 'name' => 'Завтраки', 'sort_order' => 1],
+        ['id' => 2, 'name' => 'Закуски', 'sort_order' => 2],
+        ['id' => 3, 'name' => 'Салаты', 'sort_order' => 3],
+        ['id' => 4, 'name' => 'Супы', 'sort_order' => 4],
+        ['id' => 5, 'name' => 'Основные блюда', 'sort_order' => 5],
+        ['id' => 6, 'name' => 'Гарниры', 'sort_order' => 6],
+        ['id' => 7, 'name' => 'Десерты', 'sort_order' => 7],
+        ['id' => 8, 'name' => 'Напитки', 'sort_order' => 8],
+        ['id' => 9, 'name' => 'Кофе и чай', 'sort_order' => 9],
     ];
 }
 
@@ -143,21 +147,29 @@ function demo_menu_items(): array
 {
     $u = 'https://images.unsplash.com';
     return [
-        ['id' => 1, 'name' => 'Тартар из лосося', 'price' => 890, 'category_id' => 1, 'category_name' => 'Закуски', 'category_sort' => 1, 'available' => 1, 'description' => 'Свежий лосось, авокадо, каперсы, лайм, ржаные гренки.', 'image_path' => null, 'image_url' => $u . '/photo-1546069901-ba9599a7e63c?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 2, 'name' => 'Брускетта с рикоттой', 'price' => 420, 'category_id' => 1, 'category_name' => 'Закуски', 'category_sort' => 1, 'available' => 1, 'description' => 'Запечённые томаты, рикотта, базилик, оливковое масло.', 'image_path' => null, 'image_url' => $u . '/photo-1572695157366-5e7ab693e6e8?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 3, 'name' => 'Салат с креветками и авокадо', 'price' => 650, 'category_id' => 2, 'category_name' => 'Салаты и супы', 'category_sort' => 2, 'available' => 1, 'description' => 'Микс салата, тигровые креветки, авокадо, соус песто.', 'image_path' => null, 'image_url' => $u . '/photo-1512621776951-a57141f2eefd?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 4, 'name' => 'Суп дня (борщ)', 'price' => 380, 'category_id' => 2, 'category_name' => 'Салаты и супы', 'category_sort' => 2, 'available' => 1, 'description' => 'Классический борщ со сметаной и пампушками.', 'image_path' => null, 'image_url' => $u . '/photo-1547592166-23ac45744acd?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 5, 'name' => 'Стейк рибай 250 г', 'price' => 1890, 'category_id' => 3, 'category_name' => 'Основные блюда', 'category_sort' => 3, 'available' => 1, 'description' => 'Мраморная говядина, соус из перечного соуса, овощи гриль.', 'image_path' => null, 'image_url' => $u . '/photo-1600891964092-4316c288032e?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 6, 'name' => 'Филе лосося на гриле', 'price' => 720, 'category_id' => 3, 'category_name' => 'Основные блюда', 'category_sort' => 3, 'available' => 1, 'description' => 'Лосось, пюре из цветной капусты, лимонный соус.', 'image_path' => null, 'image_url' => $u . '/photo-1467003909585-2f8a72700288?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 7, 'name' => 'Паста карбонара', 'price' => 590, 'category_id' => 3, 'category_name' => 'Основные блюда', 'category_sort' => 3, 'available' => 1, 'description' => 'Спагетти, гуанчиале, яичный желток, пармезан.', 'image_path' => null, 'image_url' => $u . '/photo-1612874742237-6526221588e3?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 8, 'name' => 'Ризотто с белыми грибами', 'price' => 640, 'category_id' => 3, 'category_name' => 'Основные блюда', 'category_sort' => 3, 'available' => 1, 'description' => 'Карнароли, белые грибы, трюфельное масло.', 'image_path' => null, 'image_url' => $u . '/photo-1476124369491-e7adc6d71e91?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 9, 'name' => 'Бургер «Домашний»', 'price' => 550, 'category_id' => 3, 'category_name' => 'Основные блюда', 'category_sort' => 3, 'available' => 1, 'description' => 'Говяжья котлета, чеддер, бекон, маринованные огурцы.', 'image_path' => null, 'image_url' => $u . '/photo-1568901346375-23c9450c58cd?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 10, 'name' => 'Куриные крылья BBQ', 'price' => 480, 'category_id' => 3, 'category_name' => 'Основные блюда', 'category_sort' => 3, 'available' => 1, 'description' => 'Копчёные крылья, соус BBQ, сельдерей, блю-чиз.', 'image_path' => null, 'image_url' => $u . '/photo-1527477396000-e27163b481c2?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 11, 'name' => 'Чизкейк «Нью-Йорк»', 'price' => 420, 'category_id' => 4, 'category_name' => 'Десерты', 'category_sort' => 4, 'available' => 1, 'description' => 'Классический с ягодным кули.', 'image_path' => null, 'image_url' => $u . '/photo-1533134242442-b4ad571cfe99?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 12, 'name' => 'Тирамису', 'price' => 390, 'category_id' => 4, 'category_name' => 'Десерты', 'category_sort' => 4, 'available' => 1, 'description' => 'Маскарпоне, эспрессо, какао.', 'image_path' => null, 'image_url' => $u . '/photo-1571877227200-dffae904c940?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 13, 'name' => 'Лимонад домашний 0,5 л', 'price' => 220, 'category_id' => 5, 'category_name' => 'Напитки и кофе', 'category_sort' => 5, 'available' => 1, 'description' => 'Мята, лайм, газированная вода.', 'image_path' => null, 'image_url' => $u . '/photo-1523677011780-384d38900d0a?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 14, 'name' => 'Эспрессо', 'price' => 180, 'category_id' => 5, 'category_name' => 'Напитки и кофе', 'category_sort' => 5, 'available' => 1, 'description' => 'Двойной шот, зёрна из Центральной Америки.', 'image_path' => null, 'image_url' => $u . '/photo-1510591508098-6fa5d0a5bc8f?w=800&q=80&auto=format&fit=crop'],
-        ['id' => 15, 'name' => 'Капучино', 'price' => 250, 'category_id' => 5, 'category_name' => 'Напитки и кофе', 'category_sort' => 5, 'available' => 1, 'description' => 'Молочная пенка, какао по желанию.', 'image_path' => null, 'image_url' => $u . '/photo-1572442388796-11668a67e53d?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 1, 'name' => 'Тартар из лосося', 'price' => 890, 'category_id' => 2, 'category_name' => 'Закуски', 'category_sort' => 2, 'available' => 1, 'description' => 'Свежий лосось, авокадо, каперсы, лайм, ржаные гренки.', 'image_path' => null, 'image_url' => $u . '/photo-1546069901-ba9599a7e63c?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 2, 'name' => 'Брускетта с рикоттой', 'price' => 420, 'category_id' => 2, 'category_name' => 'Закуски', 'category_sort' => 2, 'available' => 1, 'description' => 'Запечённые томаты, рикотта, базилик, оливковое масло.', 'image_path' => null, 'image_url' => $u . '/photo-1572695157366-5e7ab693e6e8?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 3, 'name' => 'Салат с креветками и авокадо', 'price' => 650, 'category_id' => 3, 'category_name' => 'Салаты', 'category_sort' => 3, 'available' => 1, 'description' => 'Микс салата, тигровые креветки, авокадо, соус песто.', 'image_path' => null, 'image_url' => $u . '/photo-1512621776951-a57141f2eefd?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 4, 'name' => 'Суп дня (борщ)', 'price' => 380, 'category_id' => 4, 'category_name' => 'Супы', 'category_sort' => 4, 'available' => 1, 'description' => 'Классический борщ со сметаной и пампушками.', 'image_path' => null, 'image_url' => $u . '/photo-1547592166-23ac45744acd?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 5, 'name' => 'Стейк рибай 250 г', 'price' => 1890, 'category_id' => 5, 'category_name' => 'Основные блюда', 'category_sort' => 5, 'available' => 1, 'description' => 'Мраморная говядина, соус из перечного соуса, овощи гриль.', 'image_path' => null, 'image_url' => $u . '/photo-1600891964092-4316c288032e?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 6, 'name' => 'Филе лосося на гриле', 'price' => 720, 'category_id' => 5, 'category_name' => 'Основные блюда', 'category_sort' => 5, 'available' => 1, 'description' => 'Лосось, пюре из цветной капусты, лимонный соус.', 'image_path' => null, 'image_url' => $u . '/photo-1467003909585-2f8a72700288?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 7, 'name' => 'Паста карбонара', 'price' => 590, 'category_id' => 5, 'category_name' => 'Основные блюда', 'category_sort' => 5, 'available' => 1, 'description' => 'Спагетти, гуанчиале, яичный желток, пармезан.', 'image_path' => null, 'image_url' => $u . '/photo-1612874742237-6526221588e3?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 8, 'name' => 'Ризотто с белыми грибами', 'price' => 640, 'category_id' => 5, 'category_name' => 'Основные блюда', 'category_sort' => 5, 'available' => 1, 'description' => 'Карнароли, белые грибы, трюфельное масло.', 'image_path' => null, 'image_url' => $u . '/photo-1476124369491-e7adc6d71e91?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 9, 'name' => 'Бургер «Домашний»', 'price' => 550, 'category_id' => 5, 'category_name' => 'Основные блюда', 'category_sort' => 5, 'available' => 1, 'description' => 'Говяжья котлета, чеддер, бекон, маринованные огурцы.', 'image_path' => null, 'image_url' => $u . '/photo-1568901346375-23c9450c58cd?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 10, 'name' => 'Куриные крылья BBQ', 'price' => 480, 'category_id' => 2, 'category_name' => 'Закуски', 'category_sort' => 2, 'available' => 1, 'description' => 'Копчёные крылья, соус BBQ, сельдерей, блю-чиз.', 'image_path' => null, 'image_url' => $u . '/photo-1527477396000-e27163b481c2?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 11, 'name' => 'Чизкейк «Нью-Йорк»', 'price' => 420, 'category_id' => 7, 'category_name' => 'Десерты', 'category_sort' => 7, 'available' => 1, 'description' => 'Классический с ягодным кули.', 'image_path' => null, 'image_url' => $u . '/photo-1533134242442-b4ad571cfe99?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 12, 'name' => 'Тирамису', 'price' => 390, 'category_id' => 7, 'category_name' => 'Десерты', 'category_sort' => 7, 'available' => 1, 'description' => 'Маскарпоне, эспрессо, какао.', 'image_path' => null, 'image_url' => $u . '/photo-1571877227200-dffae904c940?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 13, 'name' => 'Лимонад домашний 0,5 л', 'price' => 220, 'category_id' => 8, 'category_name' => 'Напитки', 'category_sort' => 8, 'available' => 1, 'description' => 'Мята, лайм, газированная вода.', 'image_path' => null, 'image_url' => $u . '/photo-1523677011780-384d38900d0a?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 14, 'name' => 'Эспрессо', 'price' => 180, 'category_id' => 9, 'category_name' => 'Кофе и чай', 'category_sort' => 9, 'available' => 1, 'description' => 'Двойной шот, зёрна из Центральной Америки.', 'image_path' => null, 'image_url' => $u . '/photo-1510591508098-6fa5d0a5bc8f?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 15, 'name' => 'Капучино', 'price' => 250, 'category_id' => 9, 'category_name' => 'Кофе и чай', 'category_sort' => 9, 'available' => 1, 'description' => 'Молочная пенка, какао по желанию.', 'image_path' => null, 'image_url' => $u . '/photo-1572442388796-11668a67e53d?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 16, 'name' => 'Сырники со сметаной', 'price' => 420, 'category_id' => 1, 'category_name' => 'Завтраки', 'category_sort' => 1, 'available' => 1, 'description' => 'Домашние сырники, сметана и ягодный соус.', 'image_path' => null, 'image_url' => $u . '/photo-1484723091739-30a097e8f929?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 17, 'name' => 'Омлет с томатами и зеленью', 'price' => 360, 'category_id' => 1, 'category_name' => 'Завтраки', 'category_sort' => 1, 'available' => 1, 'description' => 'Нежный омлет из трёх яиц с томатами и свежей зеленью.', 'image_path' => null, 'image_url' => $u . '/photo-1510693206972-df098062cb71?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 18, 'name' => 'Салат «Цезарь» с курицей', 'price' => 520, 'category_id' => 3, 'category_name' => 'Салаты', 'category_sort' => 3, 'available' => 1, 'description' => 'Романо, куриное филе, пармезан, сухарики, фирменный соус.', 'image_path' => null, 'image_url' => $u . '/photo-1550304943-4f24f54ddde9?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 19, 'name' => 'Куриный суп с лапшой', 'price' => 340, 'category_id' => 4, 'category_name' => 'Супы', 'category_sort' => 4, 'available' => 1, 'description' => 'Прозрачный бульон, куриное филе, домашняя лапша и зелень.', 'image_path' => null, 'image_url' => $u . '/photo-1603105037880-880cd4edfb0d?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 20, 'name' => 'Картофель по-деревенски', 'price' => 250, 'category_id' => 6, 'category_name' => 'Гарниры', 'category_sort' => 6, 'available' => 1, 'description' => 'Запечённые дольки картофеля с розмарином и чесноком.', 'image_path' => null, 'image_url' => $u . '/photo-1518013431117-eb1465fa5752?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 21, 'name' => 'Овощи гриль', 'price' => 290, 'category_id' => 6, 'category_name' => 'Гарниры', 'category_sort' => 6, 'available' => 1, 'description' => 'Цукини, баклажан, сладкий перец и томаты на гриле.', 'image_path' => null, 'image_url' => $u . '/photo-1543332164-6e82f355bad5?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 22, 'name' => 'Морс клюквенный 0,3 л', 'price' => 190, 'category_id' => 8, 'category_name' => 'Напитки', 'category_sort' => 8, 'available' => 1, 'description' => 'Освежающий морс из клюквы с лёгкой кислинкой.', 'image_path' => null, 'image_url' => $u . '/photo-1544145945-f90425340c7e?w=800&q=80&auto=format&fit=crop'],
+        ['id' => 23, 'name' => 'Чай зелёный жасмин', 'price' => 220, 'category_id' => 9, 'category_name' => 'Кофе и чай', 'category_sort' => 9, 'available' => 1, 'description' => 'Классический листовой чай с ароматом жасмина.', 'image_path' => null, 'image_url' => $u . '/photo-1597481499750-3e6b22637e12?w=800&q=80&auto=format&fit=crop'],
     ];
 }
 
@@ -224,6 +236,10 @@ function demo_kitchen_orders(): array
  */
 function demo_table_by_id(int $tableId): array
 {
+    // Reserved id for platform/delivery preview on demo hosts (see public_html/qr.php).
+    if ($tableId === 900001) {
+        return ['id' => 900001, 'name' => 'Платформа · доставка', 'restaurant_id' => 0];
+    }
     $tableId = max(1, $tableId);
     $names = [
         1 => 'Зал · стол 1',

@@ -30,6 +30,11 @@ http_response_code(503);
     <title>Технические работы — <?= e($appName) ?></title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Retry-After" content="3600">
+    <link rel="icon" href="/assets/img/logo-qrrest.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/img/logo-qrrest.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/img/logo-qrrest.png">
+    <link rel="apple-touch-icon" href="/assets/img/logo-qrrest.png">
+    <meta name="theme-color" content="#0f172a">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .float-slow { animation: float-slow 20s ease-in-out infinite; }

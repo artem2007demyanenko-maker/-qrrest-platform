@@ -91,6 +91,111 @@ function inferFoodMeta(array $row): array {
 
     $rules = [
         [
+            'match' => ['омлет с томатами и зеленью', 'омлет'],
+            'ingredients' => 'Яйца, томаты, зелень, сливочное масло',
+            'allergens' => 'Яйца, молочные продукты',
+            'weight_grams' => 220,
+            'tags' => ['завтрак'],
+        ],
+        [
+            'match' => ['картофель по-деревенски'],
+            'ingredients' => 'Картофель, специи, растительное масло',
+            'allergens' => null,
+            'weight_grams' => 180,
+            'tags' => ['гарнир'],
+        ],
+        [
+            'match' => ['морс клюквенный', 'морс'],
+            'ingredients' => 'Клюква, вода, сахар',
+            'allergens' => null,
+            'weight_grams' => 300,
+            'tags' => ['напиток'],
+        ],
+        [
+            'match' => ['эспрессо'],
+            'ingredients' => 'Кофе, вода',
+            'allergens' => null,
+            'weight_grams' => 30,
+            'tags' => ['кофе', 'напиток'],
+        ],
+        [
+            'match' => ['капучино'],
+            'ingredients' => 'Эспрессо, молоко',
+            'allergens' => 'Молочные продукты',
+            'weight_grams' => 250,
+            'tags' => ['кофе', 'напиток'],
+        ],
+        [
+            'match' => ['чизкейк «нью-йорк»', 'чизкейк'],
+            'ingredients' => 'Сливочный сыр, сливки, яйца, сахар, песочная основа',
+            'allergens' => 'Молочные продукты, яйца, глютен',
+            'weight_grams' => 150,
+            'tags' => ['десерт'],
+        ],
+        [
+            'match' => ['тирамису'],
+            'ingredients' => 'Маскарпоне, сливки, яйца, савоярди, кофе, какао',
+            'allergens' => 'Молочные продукты, яйца, глютен',
+            'weight_grams' => 150,
+            'tags' => ['десерт'],
+        ],
+        [
+            'match' => ['паста карбонара', 'карбонара'],
+            'ingredients' => 'Спагетти, гуанчиале, яичный желток, пармезан, чёрный перец',
+            'allergens' => 'Глютен, яйца, молочные продукты',
+            'weight_grams' => 300,
+            'tags' => ['паста'],
+        ],
+        [
+            'match' => ['бургер «домашний»', 'бургер'],
+            'ingredients' => 'Булочка, говяжья котлета, чеддер, бекон, огурцы, соус',
+            'allergens' => 'Глютен, молочные продукты',
+            'weight_grams' => 300,
+            'tags' => ['бургер'],
+        ],
+        [
+            'match' => ['лимонад домашний', 'лимонад'],
+            'ingredients' => 'Вода, лайм, мята, сироп, лёд',
+            'allergens' => null,
+            'weight_grams' => 500,
+            'tags' => ['напиток'],
+        ],
+        [
+            'match' => ['чай зелёный жасмин', 'зеленый жасмин', 'зелёный жасмин'],
+            'ingredients' => 'Зелёный чай, жасмин',
+            'allergens' => null,
+            'weight_grams' => 300,
+            'tags' => ['чай', 'напиток'],
+        ],
+        [
+            'match' => ['стейк рибай', 'рибай'],
+            'ingredients' => 'Говядина, соль, перец',
+            'allergens' => null,
+            'weight_grams' => 250,
+            'tags' => ['мясо'],
+        ],
+        [
+            'match' => ['филе лосося на гриле', 'лосося на гриле', 'лосось на гриле'],
+            'ingredients' => 'Лосось, лимонный соус, цветная капуста',
+            'allergens' => 'Рыба',
+            'weight_grams' => 260,
+            'tags' => ['рыба'],
+        ],
+        [
+            'match' => ['ризотто с белыми грибами', 'ризотто'],
+            'ingredients' => 'Рис арборио, белые грибы, сливочное масло, пармезан',
+            'allergens' => 'Молочные продукты',
+            'weight_grams' => 280,
+            'tags' => ['горячее'],
+        ],
+        [
+            'match' => ['овощи гриль'],
+            'ingredients' => 'Цукини, баклажан, перец, томаты, оливковое масло',
+            'allergens' => null,
+            'weight_grams' => 200,
+            'tags' => ['гарнир', 'овощи'],
+        ],
+        [
             'match' => ['сырник', 'сырники'],
             'ingredients' => 'Творог, яйцо, мука, сахар, сметана, ягодный соус',
             'allergens' => 'Молочные продукты, яйца, глютен',
@@ -159,6 +264,81 @@ function inferFoodMeta(array $row): array {
         $allergens = null;
         $weight = $weight ?? 300;
     }
+    if (str_contains($name, 'эспрессо')) {
+        $tags[] = 'кофе';
+        $tags[] = 'напиток';
+        $weight = 30;
+        $ingredients = $ingredients ?? 'Кофе, вода';
+    }
+    if (str_contains($name, 'капучино')) {
+        $tags[] = 'кофе';
+        $tags[] = 'напиток';
+        $weight = 250;
+        $ingredients = $ingredients ?? 'Эспрессо, молоко';
+        $allergens = 'Молочные продукты';
+    }
+    if (str_contains($name, 'чай') && (str_contains($name, 'жасмин') || str_contains($desc, 'жасмин'))) {
+        $tags[] = 'чай';
+        $tags[] = 'напиток';
+        $weight = $weight ?? 300;
+        $ingredients = $ingredients ?? 'Зелёный чай, жасмин';
+    }
+    if (str_contains($name, 'морс') && str_contains($name, 'клюк')) {
+        $tags[] = 'напиток';
+        $weight = $weight ?? 300;
+        $ingredients = $ingredients ?? 'Клюква, вода, сахар';
+    }
+    if (str_contains($name, 'лимонад')) {
+        $tags[] = 'напиток';
+        $weight = $weight ?? 500;
+        $ingredients = $ingredients ?? 'Вода, лайм, мята, сироп, лёд';
+    }
+    if (str_contains($name, 'омлет')) {
+        $tags[] = 'завтрак';
+        $weight = $weight ?? 220;
+        $ingredients = $ingredients ?? 'Яйца, томаты, зелень, сливочное масло';
+        $allergens = $allergens ?? 'Яйца, молочные продукты';
+    }
+    if (str_contains($name, 'картофель по-деревенски')) {
+        $tags[] = 'гарнир';
+        $weight = $weight ?? 180;
+        $ingredients = $ingredients ?? 'Картофель, специи, растительное масло';
+    }
+    if (str_contains($name, 'карбонара')) {
+        $tags[] = 'паста';
+        $weight = $weight ?? 300;
+        $ingredients = $ingredients ?? 'Спагетти, гуанчиале, яичный желток, пармезан, чёрный перец';
+        $allergens = 'Глютен, яйца, молочные продукты';
+    }
+    if (str_contains($name, 'бургер')) {
+        $tags[] = 'бургер';
+        $weight = $weight ?? 300;
+        $ingredients = $ingredients ?? 'Булочка, говяжья котлета, чеддер, бекон, огурцы, соус';
+        $allergens = $allergens ?? 'Глютен, молочные продукты';
+    }
+    if (str_contains($name, 'рибай') || str_contains($name, 'стейк')) {
+        $tags[] = 'мясо';
+        $weight = $weight ?? 250;
+        $ingredients = $ingredients ?? 'Говядина, соль, перец';
+    }
+    if (str_contains($name, 'лосось') && str_contains($name, 'грил')) {
+        $tags[] = 'рыба';
+        $weight = $weight ?? 260;
+        $ingredients = $ingredients ?? 'Лосось, лимонный соус, цветная капуста';
+        $allergens = $allergens ?? 'Рыба';
+    }
+    if (str_contains($name, 'ризотто')) {
+        $tags[] = 'горячее';
+        $weight = $weight ?? 280;
+        $ingredients = $ingredients ?? 'Рис арборио, белые грибы, сливочное масло, пармезан';
+        $allergens = $allergens ?? 'Молочные продукты';
+    }
+    if (str_contains($name, 'овощи гриль')) {
+        $tags[] = 'гарнир';
+        $tags[] = 'овощи';
+        $weight = $weight ?? 200;
+        $ingredients = $ingredients ?? 'Цукини, баклажан, перец, томаты, оливковое масло';
+    }
     if (str_contains($name, 'десерт') || str_contains($name, 'торт') || str_contains($name, 'пирож')) {
         $tags[] = 'десерт';
         $allergens = $allergens ?? 'Молочные продукты, яйца, глютен';
@@ -203,6 +383,8 @@ $updated = 0;
 $skipped = 0;
 $undetermined = 0;
 $mojibakeFound = 0;
+$enriched = 0;
+$fullyBackfilled = 0;
 $examples = [];
 
 $upd = $pdo->prepare("
@@ -221,14 +403,19 @@ foreach ($rows as $row) {
     $origTags = isset($row['tags']) ? (string)$row['tags'] : '';
     $origWeight = isset($row['weight_grams']) && $row['weight_grams'] !== null ? (int)$row['weight_grams'] : null;
 
-    $filled = strFilled($origIngredients) || strFilled($origAllergens) || strFilled($origTags) || ($origWeight !== null && $origWeight > 0);
+    $hasIngredients = strFilled($origIngredients);
+    $hasAllergens = strFilled($origAllergens);
+    $hasTags = strFilled($origTags);
+    $hasWeight = ($origWeight !== null && $origWeight > 0);
+    $filled = $hasIngredients || $hasAllergens || $hasTags || $hasWeight;
+    $fullFilled = $hasIngredients && $hasAllergens && $hasTags && $hasWeight;
     $bad = looksMojibake($origIngredients) || looksMojibake($origAllergens) || looksMojibake($origTags);
 
     if ($bad) {
         $mojibakeFound++;
     }
 
-    if ($filled && !$bad && !$force) {
+    if ($fullFilled && !$bad && !$force) {
         $alreadyGood++;
         continue;
     }
@@ -292,6 +479,11 @@ foreach ($rows as $row) {
     }
 
     $updated++;
+    if ($filled) {
+        $enriched++;
+    } else {
+        $fullyBackfilled++;
+    }
     if (count($examples) < 8) {
         $examples[] = [
             'id' => $id,
@@ -317,8 +509,10 @@ echo "Mode: " . ($isDryRun ? "DRY-RUN" : "APPLY") . PHP_EOL;
 echo "Total items: {$total}" . PHP_EOL;
 echo "Already filled & good: {$alreadyGood}" . PHP_EOL;
 echo "Updated: {$updated}" . PHP_EOL;
+echo "Enriched existing rows: {$enriched}" . PHP_EOL;
+echo "Fully backfilled rows: {$fullyBackfilled}" . PHP_EOL;
 echo "Skipped: {$skipped}" . PHP_EOL;
-echo "Undetermined: {$undetermined}" . PHP_EOL;
+echo "Still undetermined rows: {$undetermined}" . PHP_EOL;
 echo "Mojibake detected: {$mojibakeFound}" . PHP_EOL;
 echo PHP_EOL . "Examples (before/after):" . PHP_EOL;
 foreach ($examples as $ex) {
@@ -328,4 +522,3 @@ foreach ($examples as $ex) {
 }
 
 exit(0);
-

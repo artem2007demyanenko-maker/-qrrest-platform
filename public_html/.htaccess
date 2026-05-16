@@ -1,0 +1,13 @@
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+RewriteEngine On
+
+# Explicitly retire old public utility route.
+RewriteRule ^hash\.php$ - [G,L]
+
+# Common scanner targets should never hit the app layer.
+RewriteRule ^(?:wp-login\.php|xmlrpc\.php|\.env)$ - [R=404,L,NC]
+RewriteRule ^(?:wp-admin|wordpress|vendor|phpunit|owa|actuator)(?:/.*)?$ - [R=404,L,NC]
+RewriteRule ^\.git(?:/.*)?$ - [R=404,L,NC]
+</IfModule>

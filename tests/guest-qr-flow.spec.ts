@@ -11,6 +11,7 @@ import {
   qrMenuPath,
   skipUnlessMutation,
   skipUnlessOrderCreation,
+  skipOrFail,
   submitCheckout,
 } from './test-helpers';
 
@@ -37,7 +38,7 @@ test.describe('Guest QR flow', () => {
 
   test('guest checkout can create a hall order and reach order tracking', async ({ page, diagnostics }) => {
     skipUnlessOrderCreation(test.skip);
-    test.skip(!TEST_TABLE_ID, 'Set QRREST_E2E_TABLE_ID to create a table-based hall smoke order.');
+    skipOrFail(test.skip, !TEST_TABLE_ID, 'Set QRREST_E2E_TABLE_ID to create a table-based hall smoke order.');
 
     await page.goto(qrMenuPath(), { waitUntil: 'domcontentloaded' });
     await addFirstMenuItemToCart(page);

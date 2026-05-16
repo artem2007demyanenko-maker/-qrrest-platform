@@ -1,11 +1,5 @@
 <?php
 
-
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-
-
 require_once __DIR__ . '/../../app/bootstrap.php';
 
 
@@ -21,7 +15,7 @@ if (function_exists('require_login')) {
 }
 
 $currentUser = function_exists('auth_user') ? auth_user() : null;
-if (!$currentUser || ($currentUser['global_role'] ?? null) !== 'project_owner') {
+if (!function_exists('is_project_owner') || !is_project_owner()) {
     http_response_code(403);
     echo "Доступ запрещён (только владелец платформы).";
     exit;
@@ -390,19 +384,18 @@ $ownerName = $currentUser['name'] ?? 'Владелец платформы';
     <div class="pointer-events-none absolute inset-0">
         <div class="absolute -top-40 -left-32 w-80 h-80 bg-sky-500/20 blur-3xl rounded-full float-slow"></div>
         <div class="absolute bottom-[-9rem] right-[-3rem] w-96 h-96 bg-emerald-500/20 blur-3xl rounded-full float-slow-2"></div>
-        <div class="absolute топ-1/3 right-12 w-60 h-60 bg-fuchsia-500/25 blur-3xl rounded-full opacity-80"></div>
+        <div class="absolute top-1/3 right-12 w-60 h-60 bg-fuchsia-500/25 blur-3xl rounded-full opacity-80"></div>
     </div>
 
     <div class="relative z-10 max-w-6xl mx-auto px-4 py-6 sm:py-8">
         <!-- Хедер -->
+        <?php $platformNavActive = 'users'; require __DIR__ . '/_platform_nav.php'; ?>
         <header class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-                <div class="flex flex-wrap items-center gap-2 mb-2">
-                    <a href="/project-admin/index.php" class="text-[11px] text-slate-500 hover:text-emerald-300">← Панель</a>
-                    <span class="text-slate-600">|</span>
-                    <a href="/project-admin/leads.php" class="text-[11px] text-sky-400 hover:text-sky-300">Лиды</a>
-                    <a href="/project-admin/sales_forecast.php" class="text-[11px] text-emerald-400 hover:text-emerald-300">Sales Forecast</a>
-                    <a href="/project-admin/diagnostics.php" class="text-[11px] text-slate-400 hover:text-slate-200">Diagnostics</a>
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-[11px] text-slate-500">
+                    <a href="/project-admin/leads.php" class="hover:text-sky-300">Лиды</a>
+                    <a href="/project-admin/sales_forecast.php" class="hover:text-emerald-300">Sales Forecast</a>
+                    <a href="/project-admin/diagnostics.php" class="hover:text-slate-200">Diagnostics</a>
                 </div>
                 <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-700 text-[11px] text-slate-300 mb-2">
                     Управление пользователями

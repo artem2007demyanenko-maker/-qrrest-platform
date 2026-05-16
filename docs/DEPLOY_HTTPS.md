@@ -1,12 +1,14 @@
 # HTTPS для qrrest-menu.ru (Docker + Nginx на VPS)
 
+**Актуальная схема прода и расхождения с сервером:** см. [`DEPLOY_SOURCE_OF_TRUTH.md`](DEPLOY_SOURCE_OF_TRUTH.md), операционные шаги — [`PROD_RUNBOOK.md`](PROD_RUNBOOK.md).
+
 ## Аудит текущего стека
 
 | Компонент | Состояние |
 |-----------|-----------|
 | `docker-compose.yml` | Dev: `web` публикует `:80`, без TLS. |
 | `docker-compose.prod.yml` | Сервис `nginx` (Alpine) с `80:80` и `443:443`, приложение `app` без публикации портов — трафик только через Nginx → `app:80`. Все `APP_*` из `.env.production` попадают в контейнер `app` через `env_file`. |
-| `deploy/nginx/default.conf` | Два HTTPS-блока: apex+www с TLS; отдельный блок для `*.qrrest-menu.ru` с `ssl_reject_handshake on` **пока нет wildcard в сертификате** (не отдаётся чужой сертификат). |
+| `deploy/nginx/default.conf` | Один HTTPS `server`: `server_name` apex + `www` + `*.qrrest-menu.ru`, один `fullchain.pem` с wildcard SAN. |
 | Приложение | `app/config.php`: `APP_PROTOCOL`, авто-`https` при `X-Forwarded-Proto`; `APP_MAIN_DOMAIN`, `APP_COOKIE_DOMAIN`; `APP_HSTS`, `APP_HSTS_INCLUDE_SUBDOMAINS`, `APP_HSTS_PRELOAD`. |
 | HSTS | В `app/bootstrap.php` заголовок HSTS при `APP_PROTOCOL=https` и `APP_HSTS=1`. По умолчанию **без** `includeSubDomains` и **без** `preload` — включайте после полного wildcard TLS. |
 
@@ -24,14 +26,11 @@
 
 ### B. Поддомены ресторанов `*.qrrest-menu.ru` по HTTPS
 
-- Нужен сертификат с SAN **`*.qrrest-menu.ru`** (и обычно apex в том же cert) — Let’s Encrypt выдаёт **только через DNS-01**, не через HTTP challenge.
-- После установки `fullchain.pem` / `privkey.pem`, которые покрывают wildcard:
-  1. Удалите второй HTTPS-блок (`server_name *.qrrest-menu.ru; ssl_reject_handshake on;`).
-  2. Добавьте `*.qrrest-menu.ru` в `server_name` **первого** HTTPS-блока (те же `ssl_certificate` / `ssl_certificate_key`).
-  3. `nginx -s reload`.
-  4. В `.env.production` можно включить `APP_HSTS_INCLUDE_SUBDOMAINS=1` (только если все поддомены стабильно открываются по HTTPS).
+- Нужен сертификат с SAN **`*.qrrest-menu.ru`** (и обычно apex в том же cert) — Let’s Encrypt для wildcard — **DNS-01**, не HTTP-01.
+- В **текущем репозитории** уже один HTTPS-блок: `server_name` включает `*.qrrest-menu.ru` (см. `deploy/nginx/default.conf`). Положите в `deploy/nginx/certs/` `fullchain.pem` / `privkey.pem`, покрывающие эти имена, затем `nginx -t` и `nginx -s reload`.
+- В `.env.production` можно включить `APP_HSTS_INCLUDE_SUBDOMAINS=1`, когда все поддомены стабильно открываются по HTTPS.
 
-Пока этап B не выполнен: HTTPS на поддоменах **не обслуживается** корректным сертификатом; конфиг **не** выдаёт сертификат apex для SNI поддомена (нет «ложного» совпадения в браузере — используется `ssl_reject_handshake`).
+**Миграция со старого конфига** (был отдельный блок с `ssl_reject_handshake` для `*`): удалите его на сервере, объедините `server_name` как в git, скопируйте wildcard-серты, перезагрузите Nginx.
 
 ---
 

@@ -10,6 +10,10 @@
  *   REDIS_HOST, REDIS_PORT,
  *   APP_VERSION, GIT_SHA (optional, for health).
  *   GUEST_CARD_HMAC_KEY (required in production for loyalty card token signing; min 32 chars).
+ *   OTP_TEST_MODE (0|1|false|true): when enabled, OTP is not sent via SMS integration; code is logged
+ *     and may be returned in JSON from send_otp.php for local/dev testing only. Never enable in production.
+ *   OTP_TEST_PHONE: optional test phone (or comma-separated list of phones) that may use a fixed OTP in non-production.
+ *   OTP_TEST_CODE: optional fixed OTP code for OTP_TEST_PHONE in non-production.
  */
 
 $env = function (string $key, string $default = ''): string {
@@ -17,14 +21,62 @@ $env = function (string $key, string $default = ''): string {
     return $v !== false && $v !== '' ? (string)$v : $default;
 };
 
+$normalizeHost = function (string $value): string {
+    $value = trim($value);
+    if ($value === '') {
+        return '';
+    }
+    $first = trim(explode(',', $value)[0] ?? '');
+    $first = preg_replace('/:\d+$/', '', $first);
+    $first = trim((string)$first, " \t\n\r\0\x0B.");
+    $first = strtolower((string)$first);
+    if ($first === '' || preg_match('/[^a-z0-9\.\-]/', $first)) {
+        return '';
+    }
+    return $first;
+};
+
+$isPrivateProxyAddr = function (string $ip): bool {
+    $ip = trim($ip);
+    if ($ip === '') {
+        return false;
+    }
+    if ($ip === '127.0.0.1' || $ip === '::1') {
+        return true;
+    }
+    if (str_starts_with($ip, '10.') || str_starts_with($ip, '192.168.')) {
+        return true;
+    }
+    return (bool)preg_match('/^172\.(1[6-9]|2\d|3[0-1])\./', $ip);
+};
+
 $appEnv   = $env('APP_ENV', 'local');
-$protocol = $env('APP_PROTOCOL', '');
-if ($protocol === '' && isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string)$_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https') {
-    $protocol = 'https';
+$requestHost = '';
+$remoteAddr = (string)($_SERVER['REMOTE_ADDR'] ?? '');
+if ($isPrivateProxyAddr($remoteAddr)) {
+    foreach (['HTTP_X_FORWARDED_HOST', 'HTTP_X_ORIGINAL_HOST', 'HTTP_X_FORWARDED_SERVER'] as $key) {
+        $host = $normalizeHost((string)($_SERVER[$key] ?? ''));
+        if ($host !== '') {
+            $requestHost = $host;
+            break;
+        }
+    }
 }
-if ($protocol === '') {
-    $protocol = 'http';
+if ($requestHost === '') {
+    foreach (['HTTP_HOST', 'SERVER_NAME'] as $key) {
+        $host = $normalizeHost((string)($_SERVER[$key] ?? ''));
+        if ($host !== '') {
+            $requestHost = $host;
+            break;
+        }
+    }
 }
+$httpsDetected =
+    (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string)$_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')
+    || (!empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off')
+    || ((string)($_SERVER['REQUEST_SCHEME'] ?? '') === 'https')
+    || ((int)($_SERVER['SERVER_PORT'] ?? 0) === 443);
+$protocol = $env('APP_PROTOCOL', $httpsDetected ? 'https' : 'http');
 $mainDomain = $env('APP_MAIN_DOMAIN', 'qrrest-menu.ru');
 $cookieDomain = $env('APP_COOKIE_DOMAIN', '.' . $mainDomain);
 if ($cookieDomain !== '' && $cookieDomain[0] !== '.' && strpos($cookieDomain, '.') !== false) {
@@ -32,7 +84,8 @@ if ($cookieDomain !== '' && $cookieDomain[0] !== '.' && strpos($cookieDomain, '.
 } elseif ($cookieDomain === '' && $mainDomain !== '') {
     $cookieDomain = '.' . $mainDomain;
 }
-$appUrl   = $env('APP_URL', $protocol . '://' . $mainDomain);
+$defaultAppHost = $requestHost !== '' ? $requestHost : $mainDomain;
+$appUrl   = $env('APP_URL', $protocol . '://' . $defaultAppHost);
 $appDebug = (int)$env('APP_DEBUG', '0');
 // HSTS header in bootstrap: 1 = send when HTTPS; 0 = disable (useful during first TLS rollout).
 $hstsEnabled = (int)$env('APP_HSTS', '1') === 1;
@@ -64,6 +117,11 @@ $stripePricePro = $env('STRIPE_PRICE_ID_PRO', '');
 $stripeSuccessUrl = $env('STRIPE_SUCCESS_URL', '');
 $stripeCancelUrl = $env('STRIPE_CANCEL_URL', '');
 
+$otpTestModeRaw = strtolower(trim($env('OTP_TEST_MODE', '0')));
+$otpTestMode = in_array($otpTestModeRaw, ['1', 'true', 'yes', 'on'], true);
+$otpTestPhone = trim($env('OTP_TEST_PHONE', ''));
+$otpTestCode = trim($env('OTP_TEST_CODE', ''));
+
 return [
     'db' => [
         'host'    => $dbHost,
@@ -84,6 +142,9 @@ return [
         'hsts'                    => $hstsEnabled,
         'hsts_include_subdomains' => $hstsIncludeSubdomains,
         'hsts_preload'            => $hstsPreload,
+        'otp_test_mode'           => $otpTestMode,
+        'otp_test_phone'          => $otpTestPhone,
+        'otp_test_code'           => $otpTestCode,
     ],
     'security' => [
         'session_name' => 'qr_restaurant_session',

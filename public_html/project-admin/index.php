@@ -26,15 +26,24 @@ require_once __DIR__ . '/../../app/schema_guard.php';
 
 require_login();
 require_role(['project_owner']);
-
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+$currentUser = function_exists('auth_user') ? auth_user() : null;
 
 if (!function_exists('e')) {
     function e($v): string {
         return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
     }
+}
+
+/**
+ * Базовый URL арендатора https://{sub}.{mainDomain} или null, если поддомен пустой/некорректный.
+ */
+function project_admin_tenant_site_base(string $subdomain, string $mainDomain, string $protocol): ?string {
+    $sub = trim($subdomain);
+    if ($sub === '' || !preg_match('~^[a-z0-9\-]+$~', $sub)) {
+        return null;
+    }
+    $host = preg_replace('/:\d+$/', '', $mainDomain);
+    return $protocol . '://' . $sub . '.' . $host;
 }
 
 // PDO
@@ -69,22 +78,33 @@ try {
 }
 
 
-$recentRestaurants = [];
+$allRestaurants = [];
+$allRestaurantsTruncated = false;
 try {
     $deletedSql = schema_guard_restaurants_deleted_sql('r');
     $stmt = $pdo->query("
-        SELECT r.id, r.name, r.subdomain, r.status, r.created_at,
+        SELECT r.id, r.name, r.subdomain, r.status, r.created_at, r.owner_user_id,
                u.name AS owner_name, u.email AS owner_email
         FROM restaurants r
         LEFT JOIN users u ON u.id = r.owner_user_id
         WHERE 1=1 {$deletedSql}
         ORDER BY r.id DESC
-        LIMIT 5
+        LIMIT 501
     ");
-    $recentRestaurants = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    if (count($rows) > 500) {
+        $allRestaurantsTruncated = true;
+        array_pop($rows);
+    }
+    $allRestaurants = $rows;
 } catch (PDOException $e) {
-    $recentRestaurants = [];
+    $allRestaurants = [];
 }
+
+$restaurantStatusLabels = [
+    'active'  => 'Активен',
+    'blocked' => 'Заблокирован',
+];
 
 
 $userStats = [
@@ -224,7 +244,7 @@ $ownerName = $currentUser['name'] ?? 'Владелец платформы';
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Панель владельца платформы — <?= e($appName) ?></title>
+    <title>Главная платформы — <?= e($appName) ?></title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <?= brand_head_tags() ?>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -257,44 +277,49 @@ $ownerName = $currentUser['name'] ?? 'Владелец платформы';
 
     <div class="relative z-10 max-w-6xl mx-auto px-4 py-6 sm:py-8">
 
-        <header class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <?php $platformNavActive = 'home'; require __DIR__ . '/_platform_nav.php'; ?>
+
+        <header class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
                 <?= brand_platform_admin_row_html() ?>
                 <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-700 text-[11px] text-slate-300 mb-2">
-                    Панель владельца платформы
+                    Главная платформы
                     <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 </div>
                 <h1 class="text-2xl sm:text-3xl font-semibold text-slate-50 mb-1">
-                    Привет, <?= e($ownerName) ?> 👋
+                    Привет, <?= e($ownerName) ?>
                 </h1>
                 <p class="text-sm text-slate-400 max-w-xl">
-                    Здесь ты управляешь всей SaaS-платформой: рестораны, владельцы, сотрудники, заявки с лендинга и логи.
+                    Сводка по SaaS, список всех ресторанов с быстрым входом в кабинет по поддомену, заявки и логи.
                 </p>
             </div>
-            <div class="text-xs flex flex-wrap gap-2 items-stretch sm:items-end justify-start sm:justify-end w-full sm:w-auto">
-                <div class="px-3 py-2 rounded-full bg-slate-900/80 border border-slate-700 text-slate-300 min-h-[40px] inline-flex items-center">
-                    Платформа: <span class="text-slate-50 font-semibold"><?= e($appName) ?></span>
+            <div class="flex flex-col gap-2 w-full sm:w-auto sm:items-end">
+                <div class="px-3 py-2 rounded-2xl bg-slate-900/80 border border-slate-700 text-[11px] text-slate-300 inline-flex items-center">
+                    <span class="text-slate-500 mr-1">Платформа</span>
+                    <span class="text-slate-50 font-semibold"><?= e($appName) ?></span>
                 </div>
-                <a href="/owner/dashboard.php"
-                   class="inline-flex items-center gap-2 min-h-[40px] px-3 py-2 rounded-full bg-slate-900/80 border border-slate-700 text-[11px] text-slate-200 hover:border-emerald-500 hover:text-emerald-200 transition touch-manipulation">
-                    Перейти в панель владельца ресторанов
-                </a>
-                <a href="/project-admin/diagnostics.php"
-                   class="inline-flex items-center gap-2 min-h-[40px] px-3 py-2 rounded-full bg-slate-900/80 border border-slate-700 text-[11px] text-slate-400 hover:border-sky-500 hover:text-sky-200 transition touch-manipulation">
-                    Diagnostics
-                </a>
-                <a href="/project-admin/network_dashboard.php"
-                   class="inline-flex items-center gap-2 min-h-[40px] px-3 py-2 rounded-full bg-slate-900/80 border border-slate-700 text-[11px] text-slate-400 hover:border-emerald-500 hover:text-emerald-200 transition touch-manipulation">
-                    Network Analytics
-                </a>
-                <a href="/project-admin/saas_dashboard.php"
-                   class="inline-flex items-center gap-2 min-h-[40px] px-3 py-2 rounded-full bg-slate-900/80 border border-slate-700 text-[11px] text-slate-400 hover:border-amber-500 hover:text-amber-200 transition touch-manipulation">
-                    SaaS Metrics
-                </a>
-                <a href="/project-admin/experiments_dashboard.php"
-                   class="inline-flex items-center gap-2 min-h-[40px] px-3 py-2 rounded-full bg-slate-900/80 border border-slate-700 text-[11px] text-slate-400 hover:border-emerald-500 hover:text-emerald-200 transition touch-manipulation">
-                    Experiments
-                </a>
+                <div class="flex flex-wrap gap-2 justify-start sm:justify-end">
+                    <a href="/owner/dashboard.php"
+                       class="inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-700 text-[11px] text-slate-200 hover:border-emerald-500 hover:text-emerald-200 transition touch-manipulation">
+                        Панель владельца ресторанов
+                    </a>
+                    <a href="/project-admin/diagnostics.php"
+                       class="inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-700 text-[11px] text-slate-400 hover:border-sky-500 hover:text-sky-200 transition touch-manipulation">
+                        Diagnostics
+                    </a>
+                    <a href="/project-admin/network_dashboard.php"
+                       class="inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-700 text-[11px] text-slate-400 hover:border-emerald-500 hover:text-emerald-200 transition touch-manipulation">
+                        Network
+                    </a>
+                    <a href="/project-admin/saas_dashboard.php"
+                       class="inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-700 text-[11px] text-slate-400 hover:border-amber-500 hover:text-amber-200 transition touch-manipulation">
+                        SaaS Metrics
+                    </a>
+                    <a href="/project-admin/experiments_dashboard.php"
+                       class="inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-700 text-[11px] text-slate-400 hover:border-emerald-500 hover:text-emerald-200 transition touch-manipulation">
+                        Experiments
+                    </a>
+                </div>
             </div>
         </header>
 
@@ -393,88 +418,200 @@ $ownerName = $currentUser['name'] ?? 'Владелец платформы';
         </section>
 
 
-        <section class="grid grid-cols-1 lg:grid-cols-[minmax(0,3fr)_minmax(0,2.5fr)] gap-4 mb-6">
-
-            <div class="glass-card rounded-3xl border border-slate-800/80 p-4 shadow-2xl shadow-slate-950/80">
-                <div class="flex items-center justify-between mb-3">
-                    <div>
-                        <div class="text-xs text-slate-400 mb-0.5">
-                            Недавно созданные рестораны
-                        </div>
-                        <h2 class="text-sm font-semibold text-slate-50">
-                            Последние 5 ресторанов
-                        </h2>
-                    </div>
+        <section class="glass-card rounded-3xl border border-slate-800/80 p-4 sm:p-5 shadow-2xl shadow-slate-950/80 mb-6">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+                <div>
+                    <div class="text-xs text-slate-400 mb-0.5">Мультиаренда</div>
+                    <h2 class="text-lg font-semibold text-slate-50">
+                        Все рестораны
+                    </h2>
+                    <p class="text-[12px] text-slate-500 mt-1 max-w-2xl">
+                        Кабинет, staff и публичное меню открываются на поддомене тенанта.
+                        Ссылки активны только при заполненном поддомене.
+                    </p>
+                </div>
+                <div class="flex flex-wrap gap-2 shrink-0">
                     <a href="/project-admin/restaurants.php"
-                       class="text-[11px] text-sky-300 hover:text-sky-100">
-                        Все рестораны →
+                       class="inline-flex items-center justify-center rounded-xl border border-slate-600 bg-slate-900 px-3 py-2 text-[12px] font-medium text-slate-100 hover:border-emerald-500/80 hover:text-emerald-100 transition">
+                        Управление и создание
                     </a>
                 </div>
+            </div>
 
-                <?php if (!$recentRestaurants): ?>
-                    <div class="text-sm text-slate-500">
-                        Пока нет созданных ресторанов.
+            <?php if (!$allRestaurants): ?>
+                <div class="rounded-2xl border border-dashed border-slate-700 bg-slate-900/50 px-6 py-10 text-center">
+                    <p class="text-sm text-slate-300 mb-1">Ресторанов пока нет</p>
+                    <p class="text-[12px] text-slate-500 mb-4">Создай первый ресторан в разделе управления.</p>
+                    <a href="/project-admin/restaurants.php"
+                       class="inline-flex items-center rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 transition">
+                        Перейти к ресторанам
+                    </a>
+                </div>
+            <?php else: ?>
+                <?php if ($allRestaurantsTruncated): ?>
+                    <p class="text-[11px] text-amber-200/90 mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+                        Показаны последние 500 ресторанов по ID. Полный список и поиск — в разделе «Рестораны».
+                    </p>
+                <?php endif; ?>
+
+                <div class="mb-4 space-y-3">
+                    <p class="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                        <span class="font-medium text-slate-400">Основной сценарий:</span>
+                        <span class="text-slate-300">платформа</span>
+                        <span class="text-slate-600" aria-hidden="true">→</span>
+                        <span class="text-slate-300">поддомен</span>
+                        <span class="text-slate-600" aria-hidden="true">→</span>
+                        <span class="text-emerald-300 font-medium">кабинет ресторана</span>
+                        <span class="text-slate-600 hidden sm:inline">(кнопка ниже)</span>
+                    </p>
+                    <div class="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end">
+                        <div class="flex-1 min-w-[min(100%,220px)]">
+                            <label for="rest-admin-q" class="block text-[11px] text-slate-400 mb-1">Поиск по списку</label>
+                            <input type="search" id="rest-admin-q" name="rest_admin_q" autocomplete="off"
+                                   placeholder="Название, поддомен, владелец, email, ID…"
+                                   class="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500/50">
+                        </div>
+                        <div class="w-full sm:w-44">
+                            <label for="rest-admin-status" class="block text-[11px] text-slate-400 mb-1">Статус</label>
+                            <select id="rest-admin-status"
+                                    class="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/40">
+                                <option value="">Все</option>
+                                <option value="active">Активен</option>
+                                <option value="blocked">Заблокирован</option>
+                            </select>
+                        </div>
+                        <p class="text-[11px] text-slate-500 lg:pb-2" id="rest-admin-count-wrap" aria-live="polite">
+                            Показано: <span id="rest-admin-visible" class="text-slate-200 font-medium"><?= count($allRestaurants) ?></span>
+                            из <?= count($allRestaurants) ?>
+                        </p>
                     </div>
-                <?php else: ?>
-                    <div class="space-y-2 text-xs">
-                        <?php foreach ($recentRestaurants as $rest): ?>
+                </div>
+
+                <div class="overflow-auto max-h-[min(70vh,560px)] rounded-2xl border border-slate-800/80 touch-pan-x">
+                    <table id="rest-admin-table" class="min-w-[920px] w-full text-left text-[12px] text-slate-300">
+                        <thead>
+                        <tr class="border-b border-slate-800 bg-slate-950/95 text-[11px] uppercase tracking-wide text-slate-500 sticky top-0 z-20 backdrop-blur-sm shadow-[0_1px_0_0_rgba(30,41,59,0.9)]">
+                            <th class="px-3 py-2.5 font-medium">Ресторан</th>
+                            <th class="px-3 py-2.5 font-medium">Поддомен</th>
+                            <th class="px-3 py-2.5 font-medium">Владелец</th>
+                            <th class="px-3 py-2.5 font-medium">Статус</th>
+                            <th class="px-3 py-2.5 font-medium">Создан</th>
+                            <th class="px-3 py-2.5 font-medium text-right">Действия</th>
+                        </tr>
+                        </thead>
+                        <tbody id="rest-admin-tbody" class="divide-y divide-slate-800/90">
+                        <?php foreach ($allRestaurants as $rest): ?>
                             <?php
-                            $status = $rest['status'] ?? 'active';
-                            $statusLabel = $status === 'blocked' ? 'Заблокирован' : 'Активен';
-                            $statusClass = $status === 'blocked'
+                            $rid = (int)$rest['id'];
+                            $statusKey = $rest['status'] ?? 'active';
+                            $statusLabel = $restaurantStatusLabels[$statusKey] ?? $statusKey;
+                            $statusClass = $statusKey === 'blocked'
                                 ? 'border-rose-500/70 bg-rose-500/10 text-rose-100'
                                 : 'border-emerald-500/70 bg-emerald-500/10 text-emerald-100';
 
-                            $createdAt = $rest['created_at']
+                            $createdAt = !empty($rest['created_at'])
                                 ? date('d.m.Y H:i', strtotime($rest['created_at']))
-                                : '';
+                                : '—';
+
+                            $ownerNameDisp = '';
+                            $ownerEmailDisp = '';
+                            if (!empty($rest['owner_user_id'])) {
+                                $ownerNameDisp = $rest['owner_name'] ?: ('User #' . (int)$rest['owner_user_id']);
+                                $ownerEmailDisp = (string)($rest['owner_email'] ?? '');
+                            }
+
+                            $siteBase = project_admin_tenant_site_base((string)($rest['subdomain'] ?? ''), $mainDomain, $protocol);
+                            $cabinetUrl = $siteBase ? $siteBase . '/restaurant/dashboard.php' : '';
+                            $staffUrl   = $siteBase ? $siteBase . '/staff/orders.php' : '';
+                            $menuUrl    = $siteBase ? $siteBase . '/qr.php' : '';
+
+                            $subDisplay = trim((string)($rest['subdomain'] ?? ''));
+                            $subHost    = $subDisplay !== '' ? $subDisplay . '.' . preg_replace('/:\d+$/', '', $mainDomain) : '—';
+
+                            $filterRaw = implode(' ', array_filter([
+                                (string)($rest['name'] ?? ''),
+                                $subDisplay,
+                                $subHost,
+                                (string)$rid,
+                                $statusKey,
+                                $statusLabel,
+                                $ownerNameDisp,
+                                $ownerEmailDisp,
+                            ]));
+                            $filterHaystack = function_exists('mb_strtolower')
+                                ? mb_strtolower($filterRaw, 'UTF-8')
+                                : strtolower($filterRaw);
                             ?>
-                            <div class="rounded-2xl bg-slate-900/80 border border-slate-800 px-3 py-2.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                                <div>
-                                    <div class="flex items-center gap-2">
-                                        <div class="text-slate-50 font-medium">
-                                            <?= e($rest['name']) ?>
-                                        </div>
-                                        <span class="text-[10px] text-slate-500">
-                                            #<?= (int)$rest['id'] ?>
-                                        </span>
-                                    </div>
-                                    <div class="text-[11px] text-slate-400 mt-0.5">
-                                        Поддомен: <span class="text-sky-300"><?= e($rest['subdomain']) ?>.<?= isset($cfg['app']['main_domain']) ? e($cfg['app']['main_domain']) : 'domain.ru' ?></span>
-                                    </div>
-                                    <?php if (!empty($rest['owner_name']) || !empty($rest['owner_email'])): ?>
-                                        <div class="text-[11px] text-slate-500 mt-0.5">
-                                            Владелец:
-                                            <span class="text-slate-200">
-                                                <?= e($rest['owner_name'] ?: 'User') ?>
-                                            </span>
-                                            <?php if (!empty($rest['owner_email'])): ?>
-                                                <span class="text-slate-400">
-                                                    (<?= e($rest['owner_email']) ?>)
-                                                </span>
-                                            <?php endif; ?>
-                                        </div>
+                            <tr class="js-rest-admin-row bg-slate-950/40 hover:bg-slate-900/70 align-top"
+                                data-status="<?= e($statusKey) ?>"
+                                data-search="<?= e($filterHaystack) ?>">
+                                <td class="px-3 py-3">
+                                    <div class="font-medium text-slate-100"><?= e($rest['name']) ?></div>
+                                    <div class="text-[11px] text-slate-500">#<?= $rid ?></div>
+                                </td>
+                                <td class="px-3 py-3 max-w-[12rem] sm:max-w-[16rem]">
+                                    <?php if ($subDisplay !== ''): ?>
+                                        <code class="text-[11px] text-sky-200 break-all"><?= e($subHost) ?></code>
+                                    <?php else: ?>
+                                        <span class="text-slate-500">—</span>
                                     <?php endif; ?>
-                                </div>
-                                <div class="flex flex-col items-start sm:items-end gap-1">
-                                    <span class="inline-flex items-center px-2 py-1 rounded-full border text-[10px] <?= $statusClass ?>">
+                                </td>
+                                <td class="px-3 py-3 text-[11px] text-slate-300 max-w-[14rem] sm:max-w-none">
+                                    <?php if ($ownerNameDisp !== ''): ?>
+                                        <div class="break-words"><?= e($ownerNameDisp) ?></div>
+                                        <?php if ($ownerEmailDisp !== ''): ?>
+                                            <div class="text-slate-400 break-all"><?= e($ownerEmailDisp) ?></div>
+                                        <?php endif; ?>
+                                        <div class="text-[10px] text-slate-500 mt-0.5">user_id <?= (int)$rest['owner_user_id'] ?></div>
+                                    <?php else: ?>
+                                        <span class="text-slate-500">—</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="px-3 py-3">
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] <?= $statusClass ?>">
                                         <?= e($statusLabel) ?>
                                     </span>
-                                    <?php if ($createdAt): ?>
-                                        <div class="text-[10px] text-slate-500">
-                                            Создан: <?= e($createdAt) ?>
+                                </td>
+                                <td class="px-3 py-3 text-[11px] text-slate-400 whitespace-nowrap"><?= e($createdAt) ?></td>
+                                <td class="px-3 py-3 text-right align-middle">
+                                    <?php if ($siteBase): ?>
+                                        <div class="flex flex-col items-stretch sm:items-end gap-2 min-w-[9.5rem]">
+                                            <a href="<?= e($cabinetUrl) ?>" target="_blank" rel="noopener noreferrer"
+                                               title="Основной вход в админку ресторана на поддомене"
+                                               class="inline-flex justify-center items-center gap-1.5 rounded-xl border border-emerald-400/50 bg-emerald-500/15 px-3 py-2 text-[11px] sm:text-xs font-semibold text-emerald-100 shadow-md shadow-emerald-950/40 hover:bg-emerald-500/25 hover:border-emerald-300/70 transition touch-manipulation min-h-[44px]">
+                                                Открыть кабинет
+                                                <span class="opacity-80" aria-hidden="true">↗</span>
+                                            </a>
+                                            <div class="flex flex-wrap justify-end gap-x-2 gap-y-1 text-[10px] text-slate-400">
+                                                <a href="<?= e($staffUrl) ?>" target="_blank" rel="noopener noreferrer"
+                                                   class="underline decoration-slate-600 underline-offset-2 hover:text-sky-200 touch-manipulation py-1">
+                                                    Staff
+                                                </a>
+                                                <span class="text-slate-600" aria-hidden="true">·</span>
+                                                <a href="<?= e($menuUrl) ?>" target="_blank" rel="noopener noreferrer"
+                                                   class="underline decoration-slate-600 underline-offset-2 hover:text-fuchsia-200 touch-manipulation py-1">
+                                                    Меню
+                                                </a>
+                                            </div>
                                         </div>
+                                    <?php else: ?>
+                                        <span class="text-[11px] text-slate-500">Задайте поддомен в «Рестораны»</span>
                                     <?php endif; ?>
-                                    <a href="/owner/dashboard.php?restaurant_id=<?= (int)$rest['id'] ?>"
-                                       class="mt-1 inline-flex items-center px-2.5 py-1.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-100 border border-slate-700 transition">
-                                        Открыть ресторан →
-                                    </a>
-                                </div>
-                            </div>
+                                </td>
+                            </tr>
                         <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
-            </div>
+                        <tr id="rest-admin-filter-empty" class="hidden">
+                            <td colspan="6" class="px-3 py-10 text-center text-sm text-slate-500">
+                                Нет ресторанов по фильтру. Измените поиск или статус.
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </section>
+
+        <section class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4 mb-6">
 
             <div class="glass-card rounded-3xl border border-slate-800/80 p-4 shadow-2xl shadow-slate-950/80">
                 <div class="flex items-center justify-between mb-3">
@@ -541,112 +678,112 @@ $ownerName = $currentUser['name'] ?? 'Владелец платформы';
                     </div>
                 <?php endif; ?>
             </div>
-        </section>
 
-
-        <section class="glass-card rounded-3xl border border-slate-800/80 p-4 shadow-2xl shadow-slate-950/80 mb-4">
-            <div class="flex items-center justify-between mb-3">
-                <div>
-                    <div class="text-xs text-slate-400 mb-0.5">
-                        Последние события на платформе
-                    </div>
-                    <h2 class="text-sm font-semibold text-slate-50">
-                        Логи (последние 5 записей)
-                    </h2>
-                </div>
-                <a href="/project-admin/logs.php"
-                   class="text-[11px] text-sky-300 hover:text-sky-100">
-                    Все логи →
-                </a>
-            </div>
-
-            <?php if (!$recentLogs): ?>
-                <div class="text-sm text-slate-500">
-                    Логи ещё не записывались.
-                </div>
-            <?php else: ?>
-                <div class="space-y-2 text-xs">
-                    <?php foreach ($recentLogs as $log): ?>
-                        <?php
-                        $dt = $log['created_at']
-                            ? date('d.m.Y H:i:s', strtotime($log['created_at']))
-                            : '';
-                        $lvl = $log['level'] ?? 'info';
-
-                        $badgeClass = 'border-slate-600 bg-slate-900 text-slate-100';
-                        if ($lvl === 'info') {
-                            $badgeClass = 'border-sky-500/70 bg-sky-500/10 text-sky-100';
-                        } elseif ($lvl === 'warning') {
-                            $badgeClass = 'border-amber-500/70 bg-amber-500/10 text-amber-100';
-                        } elseif ($lvl === 'error') {
-                            $badgeClass = 'border-rose-500/70 bg-rose-500/10 text-rose-100';
-                        } elseif ($lvl === 'security') {
-                            $badgeClass = 'border-fuchsia-500/70 bg-fuchsia-500/10 text-fuchsia-100';
-                        } elseif ($lvl === 'payment') {
-                            $badgeClass = 'border-emerald-500/70 bg-emerald-500/10 text-emerald-100';
-                        }
-
-                        $userLabel = '—';
-                        if (!empty($log['user_id'])) {
-                            $uname = $log['user_name'] ?: ('User #' . $log['user_id']);
-                            $userLabel = $uname . ' (#' . (int)$log['user_id'] . ')';
-                        }
-
-                        $restLabel = '—';
-                        if (!empty($log['restaurant_id'])) {
-                            $rname = $log['restaurant_name'] ?: ('Restaurant #' . $log['restaurant_id']);
-                            $restLabel = $rname . ' (#' . (int)$log['restaurant_id'] . ')';
-                        }
-                        ?>
-                        <div class="rounded-2xl bg-slate-900/80 border border-slate-800 px-3 py-2.5 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-                            <div class="flex-1">
-                                <div class="flex flex-wrap items-center gap-2 mb-1">
-                                    <span class="text-[11px] text-slate-300">
-                                        <?= e($dt) ?>
-                                    </span>
-                                    <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] <?= $badgeClass ?>">
-                                        <span class="w-1.5 h-1.5 rounded-full bg-current"></span>
-                                        <?= e($lvl) ?>
-                                    </span>
-                                    <span class="text-[11px] text-slate-400">
-                                        <?php if ($userLabel !== '—'): ?>
-                                            • <?= e($userLabel) ?>
-                                        <?php endif; ?>
-                                        <?php if ($restLabel !== '—'): ?>
-                                            • <?= e($restLabel) ?>
-                                        <?php endif; ?>
-                                    </span>
-                                </div>
-                                <div class="text-[11px] text-slate-100 font-semibold mb-0.5">
-                                    <?= e($log['action'] ?: '-') ?>
-                                </div>
-                                <?php if (!empty($log['message'])): ?>
-                                    <div class="text-[11px] text-slate-400 whitespace-pre-line line-clamp-2">
-                                        <?= nl2br(e($log['message'])) ?>
-                                    </div>
-                                <?php else: ?>
-                                    <div class="text-[11px] text-slate-500">
-                                        Без текста сообщения.
-                                    </div>
-                                <?php endif; ?>
-                            </div>
+            <div class="glass-card rounded-3xl border border-slate-800/80 p-4 shadow-2xl shadow-slate-950/80">
+                <div class="flex items-center justify-between mb-3">
+                    <div>
+                        <div class="text-xs text-slate-400 mb-0.5">
+                            Последние события на платформе
                         </div>
-                    <?php endforeach; ?>
+                        <h2 class="text-sm font-semibold text-slate-50">
+                            Логи (последние 5 записей)
+                        </h2>
+                    </div>
+                    <a href="/project-admin/logs.php"
+                       class="text-[11px] text-sky-300 hover:text-sky-100">
+                        Все логи →
+                    </a>
                 </div>
-            <?php endif; ?>
+
+                <?php if (!$recentLogs): ?>
+                    <div class="text-sm text-slate-500">
+                        Логи ещё не записывались.
+                    </div>
+                <?php else: ?>
+                    <div class="space-y-2 text-xs">
+                        <?php foreach ($recentLogs as $log): ?>
+                            <?php
+                            $dt = $log['created_at']
+                                ? date('d.m.Y H:i:s', strtotime($log['created_at']))
+                                : '';
+                            $lvl = $log['level'] ?? 'info';
+
+                            $badgeClass = 'border-slate-600 bg-slate-900 text-slate-100';
+                            if ($lvl === 'info') {
+                                $badgeClass = 'border-sky-500/70 bg-sky-500/10 text-sky-100';
+                            } elseif ($lvl === 'warning') {
+                                $badgeClass = 'border-amber-500/70 bg-amber-500/10 text-amber-100';
+                            } elseif ($lvl === 'error') {
+                                $badgeClass = 'border-rose-500/70 bg-rose-500/10 text-rose-100';
+                            } elseif ($lvl === 'security') {
+                                $badgeClass = 'border-fuchsia-500/70 bg-fuchsia-500/10 text-fuchsia-100';
+                            } elseif ($lvl === 'payment') {
+                                $badgeClass = 'border-emerald-500/70 bg-emerald-500/10 text-emerald-100';
+                            }
+
+                            $userLabel = '—';
+                            if (!empty($log['user_id'])) {
+                                $uname = $log['user_name'] ?: ('User #' . $log['user_id']);
+                                $userLabel = $uname . ' (#' . (int)$log['user_id'] . ')';
+                            }
+
+                            $restLabel = '—';
+                            if (!empty($log['restaurant_id'])) {
+                                $rname = $log['restaurant_name'] ?: ('Restaurant #' . $log['restaurant_id']);
+                                $restLabel = $rname . ' (#' . (int)$log['restaurant_id'] . ')';
+                            }
+                            ?>
+                            <div class="rounded-2xl bg-slate-900/80 border border-slate-800 px-3 py-2.5 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                                <div class="flex-1">
+                                    <div class="flex flex-wrap items-center gap-2 mb-1">
+                                        <span class="text-[11px] text-slate-300">
+                                            <?= e($dt) ?>
+                                        </span>
+                                        <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] <?= $badgeClass ?>">
+                                            <span class="w-1.5 h-1.5 rounded-full bg-current"></span>
+                                            <?= e($lvl) ?>
+                                        </span>
+                                        <span class="text-[11px] text-slate-400">
+                                            <?php if ($userLabel !== '—'): ?>
+                                                • <?= e($userLabel) ?>
+                                            <?php endif; ?>
+                                            <?php if ($restLabel !== '—'): ?>
+                                                • <?= e($restLabel) ?>
+                                            <?php endif; ?>
+                                        </span>
+                                    </div>
+                                    <div class="text-[11px] text-slate-100 font-semibold mb-0.5">
+                                        <?= e($log['action'] ?: '-') ?>
+                                    </div>
+                                    <?php if (!empty($log['message'])): ?>
+                                        <div class="text-[11px] text-slate-400 whitespace-pre-line line-clamp-2">
+                                            <?= nl2br(e($log['message'])) ?>
+                                        </div>
+                                    <?php else: ?>
+                                        <div class="text-[11px] text-slate-500">
+                                            Без текста сообщения.
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
         </section>
+
         <a href="/project-admin/qr_themes.php"
-   class="block rounded-3xl bg-slate-900/80 border border-slate-800 hover:border-emerald-500/70 hover:bg-slate-900/90 p-4 transition">
-    <div class="text-xs uppercase tracking-wide text-slate-500 mb-1">
-        Оформление
-    </div>
-    <div class="text-sm font-semibold text-slate-50 mb-1">
-        QR-темы меню
-    </div>
-    <div class="text-[11px] text-slate-400">
-        Управление базовыми и кастомными темами для QR-меню ресторанов.
-    </div>
-</a>
+           class="block rounded-3xl bg-slate-900/80 border border-slate-800 hover:border-emerald-500/70 hover:bg-slate-900/90 p-4 transition mb-4">
+            <div class="text-xs uppercase tracking-wide text-slate-500 mb-1">
+                Оформление
+            </div>
+            <div class="text-sm font-semibold text-slate-50 mb-1">
+                QR-темы меню
+            </div>
+            <div class="text-[11px] text-slate-400">
+                Управление базовыми и кастомными темами для QR-меню ресторанов.
+            </div>
+        </a>
 
         <footer class="py-3 text-[11px] text-slate-500 flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -658,5 +795,50 @@ $ownerName = $currentUser['name'] ?? 'Владелец платформы';
         </footer>
     </div>
 </div>
+<script>
+(function () {
+    var tbody = document.getElementById('rest-admin-tbody');
+    var q = document.getElementById('rest-admin-q');
+    var st = document.getElementById('rest-admin-status');
+    var vis = document.getElementById('rest-admin-visible');
+    var empty = document.getElementById('rest-admin-filter-empty');
+    if (!tbody || !q || !st) {
+        return;
+    }
+
+    function norm(s) {
+        return String(s || '').toLowerCase().trim();
+    }
+
+    function apply() {
+        var query = norm(q.value);
+        var status = st.value;
+        var rows = tbody.querySelectorAll('tr.js-rest-admin-row');
+        var n = 0;
+        for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
+            var okStatus = !status || row.getAttribute('data-status') === status;
+            var hay = norm(row.getAttribute('data-search') || '');
+            var okSearch = !query || hay.indexOf(query) !== -1;
+            var show = okStatus && okSearch;
+            row.classList.toggle('hidden', !show);
+            if (show) {
+                n++;
+            }
+        }
+        if (vis) {
+            vis.textContent = String(n);
+        }
+        if (empty) {
+            empty.classList.toggle('hidden', n !== 0);
+        }
+    }
+
+    q.addEventListener('input', apply);
+    q.addEventListener('search', apply);
+    st.addEventListener('change', apply);
+    apply();
+})();
+</script>
 </body>
 </html>

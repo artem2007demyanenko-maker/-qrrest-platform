@@ -1,4 +1,8 @@
 <?php
+
+if (!function_exists('qr_public_sql_exclude_delivery') && file_exists(__DIR__ . '/qr_public_menu.php')) {
+    require_once __DIR__ . '/qr_public_menu.php';
+}
 /**
  * Restaurant self-registration repo: validate subdomain, create owner+restaurant+link+tables, bootstrap subscription.
  * Single source of truth for onboarding logic. onboarding.php is a compatibility wrapper.
@@ -148,7 +152,11 @@ function onboarding_create_default_tables(int $restaurantId, int $count = 10): v
     }
     try {
         $pdo = db();
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM tables WHERE restaurant_id = ?");
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) FROM tables AS t
+            WHERE t.restaurant_id = ?
+            " . qr_public_sql_exclude_delivery($pdo, 't') . "
+        ");
         $stmt->execute([$restaurantId]);
         if ((int)$stmt->fetchColumn() > 0) {
             return;
@@ -172,6 +180,11 @@ function onboarding_bootstrap_subscription_if_possible(int $userId, int $restaur
         try {
             require_once __DIR__ . '/billing.php';
             billing_ensure_trial_for_new_owner($userId);
+            if (function_exists('billing_get_trial_info') && function_exists('billing_seed_restaurant_trial')) {
+                $trialInfo = billing_get_trial_info($userId, $restaurantId);
+                $trialEndsAt = (string)($trialInfo['trial_ends_at'] ?? '');
+                billing_seed_restaurant_trial($restaurantId, $trialEndsAt !== '' ? $trialEndsAt : null);
+            }
         } catch (Throwable $e) {
             error_log('STABILITY_ERROR onboarding_bootstrap_subscription user_id=' . $userId . ' rest_id=' . $restaurantId . ' ' . $e->getMessage());
         }

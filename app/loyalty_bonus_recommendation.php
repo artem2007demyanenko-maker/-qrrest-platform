@@ -44,13 +44,13 @@ if (!function_exists('loyalty_bonus_guest_visits_count')) {
             return 0;
         }
         try {
-            if (!function_exists('crm_guest_lookup') && file_exists(__DIR__ . '/crm_repo.php')) {
+            if (!function_exists('crm_confirmed_guest_metrics_row') && file_exists(__DIR__ . '/crm_repo.php')) {
                 require_once __DIR__ . '/crm_repo.php';
             }
-            if (!function_exists('crm_guest_lookup')) {
+            if (!function_exists('crm_confirmed_guest_metrics_row')) {
                 return 0;
             }
-            $g = crm_guest_lookup($restaurantId, $guestId);
+            $g = crm_confirmed_guest_metrics_row($restaurantId, $guestId);
             if (!$g) {
                 return 0;
             }

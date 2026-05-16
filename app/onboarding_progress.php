@@ -1,4 +1,7 @@
 <?php
+if (!function_exists('qr_public_sql_exclude_delivery') && file_exists(__DIR__ . '/qr_public_menu.php')) {
+    require_once __DIR__ . '/qr_public_menu.php';
+}
 /**
  * Onboarding progress for restaurant owners: steps and completion detection.
  * Demo mode: always treated as completed (no banner).
@@ -136,7 +139,11 @@ if (!function_exists('onboarding_progress_tables_count')) {
         }
         try {
             $pdo = db();
-            $stmt = $pdo->prepare("SELECT COUNT(*) FROM tables WHERE restaurant_id = ?");
+            $stmt = $pdo->prepare("
+                SELECT COUNT(*) FROM tables AS t
+                WHERE t.restaurant_id = ?
+                " . qr_public_sql_exclude_delivery($pdo, 't') . "
+            ");
             $stmt->execute([$restaurantId]);
             return (int)$stmt->fetchColumn();
         } catch (Throwable $e) {

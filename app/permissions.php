@@ -6,8 +6,8 @@ require_once __DIR__ . '/db.php';
 if (!function_exists('render_restaurant_context_required')) {
     function render_restaurant_context_required(): void
     {
-        $isJson = function_exists('auth_request_expects_json')
-            ? auth_request_expects_json()
+        $isJson = function_exists('is_api_request')
+            ? is_api_request()
             : (
                 stripos((string)($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json') !== false
                 || stripos((string)($_SERVER['REQUEST_URI'] ?? ''), '/ajax/') !== false
@@ -718,6 +718,7 @@ if (!function_exists('resolve_staff_restaurant_context')) {
                 continue;
             }
             $_SESSION['current_restaurant_id'] = (int)$rid;
+            $_SESSION['restaurant_id'] = (int)$rid;
             $currentRestaurant = $restaurant;
             staff_context_debug_log('resolve_ok', [
                 'source' => 'candidate',
@@ -932,6 +933,7 @@ if (!function_exists('resolve_staff_restaurant_context')) {
         }
 
         $_SESSION['current_restaurant_id'] = $rid;
+        $_SESSION['restaurant_id'] = $rid;
         $currentRestaurant = $restaurant;
         staff_context_debug_log('resolve_ok', [
             'source' => 'bindings',

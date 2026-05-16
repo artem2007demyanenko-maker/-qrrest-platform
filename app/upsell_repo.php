@@ -1,6 +1,10 @@
 <?php
 // app/upsell_repo.php — contextual upsell by base cart items
 
+if (file_exists(__DIR__ . '/schema_guard.php')) {
+    require_once __DIR__ . '/schema_guard.php';
+}
+
 function upsell_table_exists(): bool
 {
     if (function_exists('db_table_exists')) {
@@ -28,7 +32,7 @@ function upsell_get_for_base_items(int $restaurantId, array $baseIds, int $limit
     $placeholders = implode(',', array_fill(0, count($baseIds), '?'));
     $exclude = implode(',', array_map('intval', $baseIds));
     $sql = "
-        SELECT m.id, m.name, m.price, m.image_path, m.image_url, m.description, m.category_id
+        SELECT m.id, m.name, m.price, m.image_path, m.description, m.category_id
         FROM menu_item_upsells u
         INNER JOIN menu_items m ON m.id = u.upsell_item_id AND m.restaurant_id = u.restaurant_id AND m.available = 1
         WHERE u.restaurant_id = ? AND u.active = 1
@@ -63,18 +67,18 @@ function upsell_fallback_popular(int $restaurantId, int $limit = 6): array
     $hasOrderItemsMenuItem = function_exists('db_column_exists') && db_column_exists('order_items', 'menu_item_id');
     if ($hasOrderItemsMenuItem) {
         $stmt = $pdo->prepare("
-            SELECT m.id, m.name, m.price, m.image_path, m.image_url, m.description, m.category_id
+            SELECT m.id, m.name, m.price, m.image_path, m.description, m.category_id
             FROM menu_items m
             INNER JOIN order_items oi ON oi.menu_item_id = m.id
             INNER JOIN orders o ON o.id = oi.order_id AND o.restaurant_id = m.restaurant_id
             WHERE m.restaurant_id = ? AND m.available = 1
-            GROUP BY m.id, m.name, m.price, m.image_path, m.image_url, m.description, m.category_id
+            GROUP BY m.id, m.name, m.price, m.image_path, m.description, m.category_id
             ORDER BY COUNT(*) DESC, m.id DESC
             LIMIT " . (int)$limit);
         $stmt->execute([$restaurantId]);
     } else {
         $stmt = $pdo->prepare("
-            SELECT id, name, price, image_path, image_url, description, category_id
+            SELECT id, name, price, image_path, description, category_id
             FROM menu_items
             WHERE restaurant_id = ? AND available = 1
             ORDER BY id DESC

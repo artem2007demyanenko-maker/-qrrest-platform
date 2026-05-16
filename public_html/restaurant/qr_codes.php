@@ -65,7 +65,12 @@ $guestMain = isset($cfgMenu['app']['main_domain']) ? (string)$cfgMenu['app']['ma
 $guestSub = isset($currentRestaurant['subdomain']) ? trim((string)$currentRestaurant['subdomain']) : '';
 $canBuildGuestUrl = ($guestMain !== '' && $guestSub !== '');
 
-$stmt = $pdo->prepare('SELECT * FROM tables WHERE restaurant_id = :rest ORDER BY id ASC');
+$stmt = $pdo->prepare('
+    SELECT * FROM tables AS t
+    WHERE t.restaurant_id = :rest
+    ' . qr_public_sql_exclude_delivery($pdo, 't') . '
+    ORDER BY t.id ASC
+');
 $stmt->execute(['rest' => $restaurantId]);
 $tables = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -100,30 +105,25 @@ function qr_codes_urls_for_table(string $proto, string $main, string $sub, int $
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100 antialiased flex flex-col md:flex-row overflow-x-hidden">
-
-<aside class="w-full md:w-[260px] shrink-0 bg-[#0f172a] border-b md:border-b-0 md:border-r border-slate-800/90 md:min-h-screen">
-    <div class="p-5 md:p-6 md:sticky md:top-0 md:max-h-screen md:flex md:flex-col">
-        <?= brand_restaurant_sidebar_header_html($restaurantName) ?>
-        <nav class="flex flex-wrap md:flex-col gap-1 text-[15px] font-medium">
-            <a href="/restaurant/dashboard.php" class="px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors">Дашборд</a>
-            <a href="/restaurant/menu_manage.php" class="px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors">Меню</a>
-            <a href="/restaurant/tables.php" class="px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors">Столы</a>
-            <a href="/restaurant/qr_codes.php" class="px-3 py-2.5 rounded-xl text-white bg-white/10 border border-white/10 shadow-sm">QR-коды</a>
-            <a href="/restaurant/orders.php" class="px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors">Заказы</a>
-            <a href="/restaurant/settings.php" class="px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors">Настройки</a>
-        </nav>
-        <div class="mt-6 md:mt-auto pt-4 md:pt-8 border-t border-slate-800/80 md:border-0">
-            <a href="/logout.php" class="block px-3 py-2.5 rounded-xl text-sm text-slate-500 hover:text-red-300 hover:bg-red-500/10 transition-colors">Выйти</a>
-        </div>
-    </div>
-</aside>
+<?php
+$restaurantSidebarActive = 'qr_codes';
+$restaurantSidebarName = (string)($restaurantName ?? ($currentRestaurant['name'] ?? 'Ресторан'));
+require __DIR__ . '/_sidebar_mobile.php';
+require __DIR__ . '/_sidebar.php';
+?>
 
 <main class="flex-1 min-w-0 overflow-x-hidden">
     <div class="max-w-6xl mx-auto px-4 py-6 md:px-8 md:py-10 space-y-8">
+        <?php
+        $operationalNavActive = 'qr_codes';
+        require __DIR__ . '/_restaurant_cabinet_context.php';
+        require __DIR__ . '/_restaurant_operational_nav.php';
+        ?>
 
-        <header class="space-y-1">
+        <header class="space-y-1 border-b border-slate-800/80 pb-4">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-emerald-500/85">Операции · QR</p>
             <h1 class="text-2xl md:text-3xl font-bold text-white tracking-tight">QR-коды столов</h1>
-            <p class="text-slate-400 text-sm md:text-base"><?= e($restaurantName) ?></p>
+            <p class="text-slate-400 text-sm md:text-base">Генерация, печать и быстрый доступ к QR-меню по столам</p>
         </header>
 
         <?php if ($success): ?>

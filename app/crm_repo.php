@@ -35,15 +35,107 @@ function crm_outbox_table_ready(): bool
     return function_exists('db_table_exists') ? db_table_exists('crm_outbox') : true;
 }
 
+function crm_orders_have_crm_guest_id(): bool
+{
+    return function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id');
+}
+
+function crm_guests_have_loyalty_guest_id(): bool
+{
+    return function_exists('db_column_exists') && db_column_exists('crm_guests', 'loyalty_guest_id');
+}
+
+function crm_confirmed_visits_ready(): bool
+{
+    return function_exists('db_table_exists') && db_table_exists('crm_guests') && db_table_exists('orders');
+}
+
+/**
+ * Nested-safe CRM writes: outer checkout txn stays intact (SAVEPOINT when already in transaction).
+ *
+ * @return array{own: bool, sp: ?string}
+ */
+function crm_internal_tx_begin(PDO $pdo): array
+{
+    if (!$pdo->inTransaction()) {
+        try {
+            $pdo->beginTransaction();
+        } catch (PDOException $e) {
+            if (stripos($e->getMessage(), 'active transaction') !== false) {
+                $sp = 'crm_' . bin2hex(random_bytes(4));
+                $pdo->exec('SAVEPOINT ' . $sp);
+
+                return ['own' => false, 'sp' => $sp];
+            }
+            throw $e;
+        }
+
+        return ['own' => true, 'sp' => null];
+    }
+    $sp = 'crm_' . bin2hex(random_bytes(4));
+    $pdo->exec('SAVEPOINT ' . $sp);
+
+    return ['own' => false, 'sp' => $sp];
+}
+
+function crm_internal_tx_release(PDO $pdo, ?array $tx): void
+{
+    if ($tx === null) {
+        return;
+    }
+    try {
+        if (!empty($tx['own'])) {
+            if ($pdo->inTransaction()) {
+                $pdo->commit();
+            }
+        } elseif (!empty($tx['sp']) && $pdo->inTransaction()) {
+            $pdo->exec('RELEASE SAVEPOINT ' . $tx['sp']);
+        }
+    } catch (Throwable $e) {
+        if (function_exists('error_log')) {
+            error_log('crm_internal_tx_release ' . $e->getMessage());
+        }
+    }
+}
+
+function crm_internal_tx_undo(PDO $pdo, ?array $tx): void
+{
+    if ($tx === null) {
+        return;
+    }
+    try {
+        if (!empty($tx['own'])) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+        } elseif (!empty($tx['sp']) && $pdo->inTransaction()) {
+            try {
+                $pdo->exec('ROLLBACK TO SAVEPOINT ' . $tx['sp']);
+            } catch (Throwable $e) {
+                // savepoint may be gone
+            }
+        }
+    } catch (Throwable $e) {
+        if (function_exists('error_log')) {
+            error_log('crm_internal_tx_undo ' . $e->getMessage());
+        }
+    }
+}
+
 function crm_guest_lookup(int $restaurantId, int $guestId): ?array
 {
     if ($restaurantId <= 0 || $guestId <= 0 || !function_exists('db')) {
         return null;
     }
+    if (!function_exists('db_table_exists') || !db_table_exists('crm_guests')) {
+        return null;
+    }
 
     $pdo = db();
+    $loyaltyGuestSelect = crm_guests_have_loyalty_guest_id() ? ', loyalty_guest_id' : ', 0 AS loyalty_guest_id';
     $stmt = $pdo->prepare("
         SELECT id, restaurant_id, phone, consent, first_seen_at, last_seen_at, visits_count, created_at, updated_at
+               {$loyaltyGuestSelect}
         FROM crm_guests
         WHERE restaurant_id = ? AND id = ?
         LIMIT 1
@@ -65,12 +157,16 @@ function crm_order_lookup(int $restaurantId, int $orderId): ?array
     $crmConsentSelect = (function_exists('db_column_exists') && db_column_exists('orders', 'crm_consent')) ? ', crm_consent' : ", 0 AS crm_consent";
     $customerPhoneSelect = (function_exists('db_column_exists') && db_column_exists('orders', 'customer_phone')) ? ', customer_phone' : ", NULL AS customer_phone";
     $flowIdSelect = (function_exists('db_column_exists') && db_column_exists('orders', 'flow_id')) ? ', flow_id' : ", NULL AS flow_id";
+    $crmGuestIdSelect = crm_orders_have_crm_guest_id() ? ', crm_guest_id' : ', 0 AS crm_guest_id';
+    $loyaltyGuestIdSelect = (function_exists('db_column_exists') && db_column_exists('orders', 'guest_id')) ? ', guest_id AS loyalty_guest_id' : ', 0 AS loyalty_guest_id';
     $stmt = $pdo->prepare("
         SELECT id, restaurant_id, table_id, order_status, payment_status, {$amountCol} AS total_amount
                {$crmPhoneSelect}
                {$crmConsentSelect}
                {$customerPhoneSelect}
                {$flowIdSelect}
+               {$crmGuestIdSelect}
+               {$loyaltyGuestIdSelect}
         FROM orders
         WHERE restaurant_id = ? AND id = ?
         LIMIT 1
@@ -78,6 +174,228 @@ function crm_order_lookup(int $restaurantId, int $orderId): ?array
     $stmt->execute([$restaurantId, $orderId]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     return $row ?: null;
+}
+
+/**
+ * Confirmed CRM visit truth: paid, non-canceled orders linked to CRM guest.
+ * Falls back to legacy crm_guests counters only when confirmed paid linkage is still missing.
+ *
+ * @return list<array<string, mixed>>
+ */
+function crm_confirmed_guest_metrics_rows(int $restaurantId): array
+{
+    $restaurantId = (int)$restaurantId;
+    if ($restaurantId <= 0 || !function_exists('db') || !function_exists('db_table_exists') || !db_table_exists('crm_guests')) {
+        return [];
+    }
+
+    $pdo = db();
+    $amountCol = crm_orders_amount_column();
+    $hasOrders = db_table_exists('orders');
+    $hasOrderCrmGuestId = crm_orders_have_crm_guest_id();
+    $hasOrderLoyaltyGuestId = function_exists('db_column_exists') && db_column_exists('orders', 'guest_id');
+    $hasOrderStatus = function_exists('db_column_exists') && db_column_exists('orders', 'order_status');
+    $hasPayment = function_exists('db_column_exists') && db_column_exists('orders', 'payment_status');
+    $hasCrmLoyaltyGuestId = crm_guests_have_loyalty_guest_id();
+    $loyaltyGuestSelect = $hasCrmLoyaltyGuestId ? ', g.loyalty_guest_id' : ', 0 AS loyalty_guest_id';
+
+    try {
+        if ($hasOrders) {
+            $paidSql = $hasPayment ? " AND o.payment_status = 'paid' " : '';
+            $notCanceledSql = $hasOrderStatus ? " AND (o.order_status IS NULL OR o.order_status <> 'canceled') " : '';
+            $aggParts = [];
+            $aggParams = [];
+
+            if ($hasOrderCrmGuestId) {
+                $aggParts[] = "
+                    SELECT o.crm_guest_id AS crm_gid,
+                           COUNT(*) AS confirmed_visits_count,
+                           COUNT(*) AS order_count,
+                           SUM(COALESCE(o.{$amountCol}, 0)) AS total_spent,
+                           MAX(o.created_at) AS confirmed_last_seen_at
+                    FROM orders o
+                    WHERE o.restaurant_id = ?
+                      AND o.crm_guest_id IS NOT NULL AND o.crm_guest_id > 0
+                      {$paidSql}
+                      {$notCanceledSql}
+                    GROUP BY o.crm_guest_id
+                ";
+                $aggParams[] = $restaurantId;
+            }
+
+            if ($hasOrderLoyaltyGuestId && $hasCrmLoyaltyGuestId) {
+                $aggParts[] = "
+                    SELECT g2.id AS crm_gid,
+                           COUNT(*) AS confirmed_visits_count,
+                           COUNT(*) AS order_count,
+                           SUM(COALESCE(o.{$amountCol}, 0)) AS total_spent,
+                           MAX(o.created_at) AS confirmed_last_seen_at
+                    FROM orders o
+                    INNER JOIN crm_guests g2
+                        ON g2.restaurant_id = o.restaurant_id
+                       AND g2.loyalty_guest_id = o.guest_id
+                    WHERE o.restaurant_id = ?
+                      AND o.guest_id IS NOT NULL AND o.guest_id > 0
+                      " . ($hasOrderCrmGuestId ? "AND (o.crm_guest_id IS NULL OR o.crm_guest_id = 0)" : "") . "
+                      {$paidSql}
+                      {$notCanceledSql}
+                    GROUP BY g2.id
+                ";
+                $aggParams[] = $restaurantId;
+            }
+
+            if ($aggParts !== []) {
+                $sql = "
+                    SELECT
+                        g.id,
+                        g.restaurant_id,
+                        g.phone,
+                        g.consent,
+                        g.first_seen_at,
+                        g.created_at,
+                        g.updated_at
+                        {$loyaltyGuestSelect},
+                        g.last_seen_at AS legacy_last_seen_at,
+                        g.visits_count AS legacy_visits_count,
+                        COALESCE(a.confirmed_visits_count, 0) AS confirmed_visits_count,
+                        a.confirmed_last_seen_at,
+                        COALESCE(a.order_count, 0) AS order_count,
+                        COALESCE(a.total_spent, 0) AS total_spent,
+                        a.confirmed_last_seen_at AS last_order_at,
+                        CASE
+                            WHEN COALESCE(a.confirmed_visits_count, 0) > 0 THEN COALESCE(a.confirmed_visits_count, 0)
+                            ELSE COALESCE(g.visits_count, 0)
+                        END AS visits_count,
+                        CASE
+                            WHEN COALESCE(a.confirmed_visits_count, 0) > 0 THEN a.confirmed_last_seen_at
+                            ELSE g.last_seen_at
+                        END AS last_seen_at
+                    FROM crm_guests g
+                    LEFT JOIN (
+                        SELECT
+                            crm_gid,
+                            SUM(confirmed_visits_count) AS confirmed_visits_count,
+                            SUM(order_count) AS order_count,
+                            SUM(total_spent) AS total_spent,
+                            MAX(confirmed_last_seen_at) AS confirmed_last_seen_at
+                        FROM (
+                            " . implode("
+                            UNION ALL
+                            ", $aggParts) . "
+                        ) agg
+                        GROUP BY crm_gid
+                    ) a ON a.crm_gid = g.id
+                    WHERE g.restaurant_id = ?
+                    ORDER BY COALESCE(
+                        CASE
+                            WHEN COALESCE(a.confirmed_visits_count, 0) > 0 THEN a.confirmed_last_seen_at
+                            ELSE g.last_seen_at
+                        END,
+                        g.created_at
+                    ) DESC
+                ";
+                $aggParams[] = $restaurantId;
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($aggParams);
+            } else {
+                $stmt = $pdo->prepare("
+                    SELECT
+                        g.id,
+                        g.restaurant_id,
+                        g.phone,
+                        g.consent,
+                        g.first_seen_at,
+                        g.created_at,
+                        g.updated_at
+                        {$loyaltyGuestSelect},
+                        g.last_seen_at AS legacy_last_seen_at,
+                        g.visits_count AS legacy_visits_count,
+                        0 AS confirmed_visits_count,
+                        NULL AS confirmed_last_seen_at,
+                        0 AS order_count,
+                        0 AS total_spent,
+                        NULL AS last_order_at,
+                        g.visits_count AS visits_count,
+                        g.last_seen_at AS last_seen_at
+                    FROM crm_guests g
+                    WHERE g.restaurant_id = ?
+                    ORDER BY COALESCE(g.last_seen_at, g.created_at) DESC
+                ");
+                $stmt->execute([$restaurantId]);
+            }
+        } else {
+            $stmt = $pdo->prepare("
+                SELECT
+                    g.id,
+                    g.restaurant_id,
+                    g.phone,
+                    g.consent,
+                    g.first_seen_at,
+                    g.created_at,
+                    g.updated_at
+                    {$loyaltyGuestSelect},
+                    g.last_seen_at AS legacy_last_seen_at,
+                    g.visits_count AS legacy_visits_count,
+                    0 AS confirmed_visits_count,
+                    NULL AS confirmed_last_seen_at,
+                    0 AS order_count,
+                    0 AS total_spent,
+                    NULL AS last_order_at,
+                    g.visits_count AS visits_count,
+                    g.last_seen_at AS last_seen_at
+                FROM crm_guests g
+                WHERE g.restaurant_id = ?
+                ORDER BY COALESCE(g.last_seen_at, g.created_at) DESC
+            ");
+            $stmt->execute([$restaurantId]);
+        }
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        if (function_exists('error_log')) {
+            error_log('crm_confirmed_guest_metrics_rows rid=' . $restaurantId . ' ' . $e->getMessage());
+        }
+        return [];
+    }
+}
+
+/**
+ * @return array<int,array<string,mixed>>
+ */
+function crm_confirmed_guest_metrics_map(int $restaurantId): array
+{
+    $out = [];
+    foreach (crm_confirmed_guest_metrics_rows($restaurantId) as $row) {
+        $gid = (int)($row['id'] ?? 0);
+        if ($gid > 0) {
+            $out[$gid] = $row;
+        }
+    }
+    return $out;
+}
+
+function crm_confirmed_guest_metrics_row(int $restaurantId, int $guestId): ?array
+{
+    if ($restaurantId <= 0 || $guestId <= 0) {
+        return null;
+    }
+    $map = crm_confirmed_guest_metrics_map($restaurantId);
+    return $map[$guestId] ?? null;
+}
+
+function crm_confirmed_guest_metrics_row_by_phone(int $restaurantId, string $phone): ?array
+{
+    $restaurantId = (int)$restaurantId;
+    $phone = crm_normalize_phone($phone) ?? '';
+    if ($restaurantId <= 0 || $phone === '') {
+        return null;
+    }
+    foreach (crm_confirmed_guest_metrics_rows($restaurantId) as $row) {
+        if ((string)($row['phone'] ?? '') === $phone) {
+            return $row;
+        }
+    }
+    return null;
 }
 
 function crm_log_cron_run(string $jobName, string $status, string $startedAt, array $details = [], ?int $runId = null): ?int
@@ -111,23 +429,25 @@ function crm_log_cron_run(string $jobName, string $status, string $startedAt, ar
  * Upsert guest by restaurant + phone. If consent=1 sets consent=1.
  * @return array|null guest row or null on invalid phone
  */
-function crm_upsert_guest(int $restaurantId, string $phone, bool $consent): ?array
+function crm_upsert_guest(int $restaurantId, string $phone, bool $consent, ?int $loyaltyGuestId = null): ?array
 {
     $normalized = crm_normalize_phone($phone);
     if ($normalized === null || !function_exists('db')) {
         return null;
     }
+    if (!function_exists('db_table_exists') || !db_table_exists('crm_guests')) {
+        return null;
+    }
     $pdo = db();
 
-    $startedTx = false;
+    $tx = null;
     try {
-        if (!$pdo->inTransaction()) {
-            $pdo->beginTransaction();
-            $startedTx = true;
-        }
+        $tx = crm_internal_tx_begin($pdo);
 
+        $loyaltyGuestSelect = crm_guests_have_loyalty_guest_id() ? ', loyalty_guest_id' : ', 0 AS loyalty_guest_id';
         $stmt = $pdo->prepare("
             SELECT id, restaurant_id, phone, consent, first_seen_at, last_seen_at, visits_count, created_at, updated_at
+                   {$loyaltyGuestSelect}
             FROM crm_guests
             WHERE restaurant_id = ? AND phone = ?
             LIMIT 1
@@ -139,48 +459,77 @@ function crm_upsert_guest(int $restaurantId, string $phone, bool $consent): ?arr
         $now = date('Y-m-d H:i:s');
         if ($row) {
             $consentVal = $consent ? 1 : (int)($row['consent'] ?? 0);
+            $set = ['consent = ?', 'updated_at = ?'];
+            $params = [$consentVal, $now];
+            if (crm_guests_have_loyalty_guest_id() && $loyaltyGuestId !== null && $loyaltyGuestId > 0) {
+                $existingLoyaltyGuestId = (int)($row['loyalty_guest_id'] ?? 0);
+                if ($existingLoyaltyGuestId <= 0) {
+                    $set[] = 'loyalty_guest_id = ?';
+                    $params[] = $loyaltyGuestId;
+                    $row['loyalty_guest_id'] = $loyaltyGuestId;
+                } elseif ($existingLoyaltyGuestId !== $loyaltyGuestId && function_exists('error_log')) {
+                    error_log('crm_upsert_guest loyalty_guest_conflict rid=' . $restaurantId . ' crm_guest_id=' . (int)$row['id'] . ' existing=' . $existingLoyaltyGuestId . ' incoming=' . $loyaltyGuestId);
+                }
+            }
+            $params[] = (int)$row['id'];
             $upd = $pdo->prepare("
                 UPDATE crm_guests
-                SET consent = ?, updated_at = ?
+                SET " . implode(', ', $set) . "
                 WHERE id = ?
             ");
-            $upd->execute([$consentVal, $now, (int)$row['id']]);
+            $upd->execute($params);
             $row['consent'] = (string)$consentVal;
-            if ($startedTx) {
-                $pdo->commit();
-            }
+            crm_internal_tx_release($pdo, $tx);
+
             return $row;
         }
 
+        $fields = ['restaurant_id', 'phone', 'consent', 'first_seen_at', 'last_seen_at', 'visits_count'];
+        $placeholders = ['?', '?', '?', '?', 'NULL', '0'];
+        $params = [$restaurantId, $normalized, $consent ? 1 : 0, $now];
+        if (crm_guests_have_loyalty_guest_id() && $loyaltyGuestId !== null && $loyaltyGuestId > 0) {
+            $fields[] = 'loyalty_guest_id';
+            $placeholders[] = '?';
+            $params[] = $loyaltyGuestId;
+        }
         $ins = $pdo->prepare("
-            INSERT INTO crm_guests (restaurant_id, phone, consent, first_seen_at, last_seen_at, visits_count)
-            VALUES (?, ?, ?, ?, ?, 0)
+            INSERT INTO crm_guests (" . implode(', ', $fields) . ")
+            VALUES (" . implode(', ', $placeholders) . ")
         ");
         $consentVal = $consent ? 1 : 0;
-        $ins->execute([$restaurantId, $normalized, $consentVal, $now, $now]);
+        $ins->execute($params);
         $id = (int)$pdo->lastInsertId();
 
-        if ($startedTx) {
-            $pdo->commit();
-        }
-        return [
+        crm_internal_tx_release($pdo, $tx);
+
+        $out = [
             'id' => $id,
             'restaurant_id' => $restaurantId,
             'phone' => $normalized,
             'consent' => (string)$consentVal,
             'first_seen_at' => $now,
-            'last_seen_at' => $now,
+            'last_seen_at' => null,
             'visits_count' => '0',
             'created_at' => $now,
             'updated_at' => $now,
         ];
+        if (crm_guests_have_loyalty_guest_id()) {
+            $out['loyalty_guest_id'] = (string)max(0, (int)($loyaltyGuestId ?? 0));
+        }
+
+        return $out;
     } catch (Throwable $e) {
-        if ($startedTx && $pdo->inTransaction()) {
-            $pdo->rollBack();
+        crm_internal_tx_undo($pdo, $tx);
+        $msg = $e->getMessage();
+        if (stripos($msg, 'Base table or view not found') !== false
+            || stripos($msg, "doesn't exist") !== false
+            || (string)$e->getCode() === '42S02') {
+            return null;
         }
         if (function_exists('error_log')) {
-            error_log('crm_upsert_guest rid=' . $restaurantId . ' ' . $e->getMessage());
+            error_log('crm_upsert_guest rid=' . $restaurantId . ' ' . $msg);
         }
+
         return null;
     }
 }
@@ -191,44 +540,58 @@ function crm_store_order_contact(int $restaurantId, int $orderId, string $phone,
         return false;
     }
 
-    $phone = crm_normalize_phone($phone) ?? '';
-    if ($phone === '') {
-        return false;
-    }
-
-    $columns = [];
-    $params = [':id' => $orderId, ':rid' => $restaurantId];
-
-    if (function_exists('db_column_exists') && db_column_exists('orders', 'crm_phone')) {
-        $columns[] = 'crm_phone = :crm_phone';
-        $params[':crm_phone'] = $phone;
-    }
-    if (function_exists('db_column_exists') && db_column_exists('orders', 'crm_consent')) {
-        $columns[] = 'crm_consent = :crm_consent';
-        $params[':crm_consent'] = $consent ? 1 : 0;
-    }
-    if (function_exists('db_column_exists') && db_column_exists('orders', 'customer_phone')) {
-        $columns[] = 'customer_phone = :customer_phone';
-        $params[':customer_phone'] = $phone;
-    }
-    if (function_exists('db_column_exists') && db_column_exists('orders', 'guest_id')) {
-        $guest = crm_upsert_guest($restaurantId, $phone, $consent);
-        $guestId = (int)($guest['id'] ?? 0);
-        if ($guestId > 0) {
-            $columns[] = 'guest_id = :guest_id';
-            $params[':guest_id'] = $guestId;
+    try {
+        $phone = crm_normalize_phone($phone) ?? '';
+        if ($phone === '') {
+            return false;
         }
-    }
 
-    if ($columns === []) {
+        $columns = [];
+        $params = [':id' => $orderId, ':rid' => $restaurantId];
+
+        if (function_exists('db_column_exists') && db_column_exists('orders', 'crm_phone')) {
+            $columns[] = 'crm_phone = :crm_phone';
+            $params[':crm_phone'] = $phone;
+        }
+        if (function_exists('db_column_exists') && db_column_exists('orders', 'crm_consent')) {
+            $columns[] = 'crm_consent = :crm_consent';
+            $params[':crm_consent'] = $consent ? 1 : 0;
+        }
+        if (function_exists('db_column_exists') && db_column_exists('orders', 'customer_phone')) {
+            $columns[] = 'customer_phone = :customer_phone';
+            $params[':customer_phone'] = $phone;
+        }
+        $loyaltyGuestId = 0;
+        if (function_exists('db_column_exists') && db_column_exists('orders', 'guest_id')) {
+            $orderGuestStmt = db()->prepare('SELECT guest_id FROM orders WHERE id = ? AND restaurant_id = ? LIMIT 1');
+            $orderGuestStmt->execute([$orderId, $restaurantId]);
+            $loyaltyGuestId = (int)($orderGuestStmt->fetchColumn() ?: 0);
+        }
+
+        $crmGuest = crm_upsert_guest($restaurantId, $phone, $consent, $loyaltyGuestId > 0 ? $loyaltyGuestId : null);
+        $crmGuestId = (int)($crmGuest['id'] ?? 0);
+        if (crm_orders_have_crm_guest_id() && $crmGuestId > 0) {
+            $columns[] = 'crm_guest_id = :crm_guest_id';
+            $params[':crm_guest_id'] = $crmGuestId;
+        }
+
+        if ($columns === []) {
+            return false;
+        }
+
+        $pdo = db();
+        $sql = "UPDATE orders SET " . implode(', ', $columns) . " WHERE id = :id AND restaurant_id = :rid";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return $stmt->rowCount() > 0;
+    } catch (Throwable $e) {
+        if (function_exists('error_log')) {
+            error_log('crm_store_order_contact rid=' . $restaurantId . ' oid=' . $orderId . ' ' . $e->getMessage());
+        }
+
         return false;
     }
-
-    $pdo = db();
-    $sql = "UPDATE orders SET " . implode(', ', $columns) . " WHERE id = :id AND restaurant_id = :rid";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
-    return $stmt->rowCount() > 0;
 }
 
 /**
@@ -240,6 +603,9 @@ function crm_record_visit(int $restaurantId, int $guestId, ?int $orderId, ?int $
     if (!crm_writes_allowed() || $restaurantId <= 0 || $guestId <= 0 || !function_exists('db')) {
         return false;
     }
+    if (!function_exists('db_table_exists') || !db_table_exists('crm_guests') || !db_table_exists('crm_visits')) {
+        return false;
+    }
 
     $pdo = db();
     $guest = crm_guest_lookup($restaurantId, $guestId);
@@ -247,22 +613,21 @@ function crm_record_visit(int $restaurantId, int $guestId, ?int $orderId, ?int $
         return false;
     }
 
-    $startedTx = false;
+    $tx = null;
     try {
-        if (!$pdo->inTransaction()) {
-            $pdo->beginTransaction();
-            $startedTx = true;
-        }
+        $tx = crm_internal_tx_begin($pdo);
 
         $visitedAt = date('Y-m-d H:i:s');
         if ($orderId !== null && $orderId > 0) {
             $order = crm_order_lookup($restaurantId, $orderId);
             if (!$order) {
-                if ($startedTx) $pdo->rollBack();
+                crm_internal_tx_undo($pdo, $tx);
+
                 return false;
             }
             if (($order['payment_status'] ?? '') !== 'paid' || ($order['order_status'] ?? '') === 'canceled') {
-                if ($startedTx) $pdo->rollBack();
+                crm_internal_tx_undo($pdo, $tx);
+
                 return false;
             }
             $tableId = $tableId ?: (int)($order['table_id'] ?? 0);
@@ -272,7 +637,8 @@ function crm_record_visit(int $restaurantId, int $guestId, ?int $orderId, ?int $
             $check = $pdo->prepare("SELECT 1 FROM crm_visits WHERE restaurant_id = ? AND order_id = ? LIMIT 1 FOR UPDATE");
             $check->execute([$restaurantId, $orderId]);
             if ($check->fetchColumn()) {
-                if ($startedTx) $pdo->rollBack();
+                crm_internal_tx_undo($pdo, $tx);
+
                 return false;
             }
         }
@@ -283,7 +649,8 @@ function crm_record_visit(int $restaurantId, int $guestId, ?int $orderId, ?int $
         ");
         $stmt->execute([$restaurantId, $guestId, $orderId, $tableId, round(max(0, $totalAmount), 2)]);
         if ($stmt->rowCount() <= 0) {
-            if ($startedTx) $pdo->rollBack();
+            crm_internal_tx_undo($pdo, $tx);
+
             return false;
         }
 
@@ -293,17 +660,15 @@ function crm_record_visit(int $restaurantId, int $guestId, ?int $orderId, ?int $
             WHERE id = ? AND restaurant_id = ?
         ")->execute([$visitedAt, $guestId, $restaurantId]);
 
-        if ($startedTx) {
-            $pdo->commit();
-        }
+        crm_internal_tx_release($pdo, $tx);
+
         return true;
     } catch (Throwable $e) {
-        if ($startedTx && $pdo->inTransaction()) {
-            $pdo->rollBack();
-        }
+        crm_internal_tx_undo($pdo, $tx);
         if (function_exists('error_log')) {
             error_log('crm_record_visit rid=' . $restaurantId . ' gid=' . $guestId . ' oid=' . (int)$orderId . ' ' . $e->getMessage());
         }
+
         return false;
     }
 }
@@ -515,6 +880,9 @@ function crm_process_outbox_due(int $limit = 200, ?int $restaurantId = null): ar
     if (!crm_writes_allowed() || !function_exists('db') || !crm_outbox_table_ready()) {
         return $result;
     }
+    if (!function_exists('db_table_exists') || !db_table_exists('crm_guests')) {
+        return $result;
+    }
 
     $pdo = db();
     $limit = max(1, min(500, $limit));
@@ -596,9 +964,28 @@ function crm_finalize_order_visit(int $restaurantId, int $orderId): bool
     }
 
     $consent = (int)($order['crm_consent'] ?? 0) === 1;
-    $guest = crm_upsert_guest($restaurantId, $phone, $consent);
+    $crmGuestIdFromOrder = (int)($order['crm_guest_id'] ?? 0);
+    $loyaltyGuestIdFromOrder = (int)($order['loyalty_guest_id'] ?? 0);
+    $guest = $crmGuestIdFromOrder > 0 ? crm_guest_lookup($restaurantId, $crmGuestIdFromOrder) : null;
+    if ($guest && $loyaltyGuestIdFromOrder > 0 && ((int)($guest['loyalty_guest_id'] ?? 0) <= 0)) {
+        $guest = crm_upsert_guest($restaurantId, $phone, $consent, $loyaltyGuestIdFromOrder) ?: $guest;
+    }
+    if (!$guest) {
+        $guest = crm_upsert_guest($restaurantId, $phone, $consent, $loyaltyGuestIdFromOrder > 0 ? $loyaltyGuestIdFromOrder : null);
+    }
     if (!$guest || empty($guest['id'])) {
         return false;
+    }
+
+    if (crm_orders_have_crm_guest_id()) {
+        try {
+            $upd = db()->prepare('UPDATE orders SET crm_guest_id = ? WHERE id = ? AND restaurant_id = ?');
+            $upd->execute([(int)$guest['id'], $orderId, $restaurantId]);
+        } catch (Throwable $e) {
+            if (function_exists('error_log')) {
+                error_log('crm_finalize_order_visit link_order rid=' . $restaurantId . ' oid=' . $orderId . ' ' . $e->getMessage());
+            }
+        }
     }
 
     $recorded = crm_record_visit(
@@ -610,7 +997,19 @@ function crm_finalize_order_visit(int $restaurantId, int $orderId): bool
     );
 
     if (!$recorded) {
-        return false;
+        $visitExists = false;
+        if (function_exists('db_table_exists') && db_table_exists('crm_visits')) {
+            try {
+                $stmt = db()->prepare('SELECT 1 FROM crm_visits WHERE restaurant_id = ? AND order_id = ? LIMIT 1');
+                $stmt->execute([$restaurantId, $orderId]);
+                $visitExists = (bool)$stmt->fetchColumn();
+            } catch (Throwable $e) {
+                $visitExists = false;
+            }
+        }
+        if (!$visitExists) {
+            return false;
+        }
     }
 
     if (file_exists(__DIR__ . '/guest_retention.php')) {
@@ -632,12 +1031,66 @@ function crm_finalize_order_visit(int $restaurantId, int $orderId): bool
 }
 
 /**
+ * Link QR order to CRM guest as pre-visit intent only.
+ * Real CRM visit truth is finalized later from an eligible paid order.
+ */
+function crm_touch_visit_after_qr_order(
+    int $restaurantId,
+    int $orderId,
+    string $phoneRaw,
+    float $totalAmount,
+    int $tableId,
+    bool $marketingConsent
+): bool {
+    if (!crm_writes_allowed() || $restaurantId <= 0 || $orderId <= 0 || !function_exists('db')) {
+        return false;
+    }
+    $norm = crm_normalize_phone($phoneRaw);
+    if ($norm === null || $norm === '') {
+        return false;
+    }
+    if (!function_exists('db_table_exists') || !db_table_exists('crm_guests')) {
+        return false;
+    }
+
+    $pdo = db();
+    try {
+        $loyaltyGuestId = 0;
+        if (function_exists('db_column_exists') && db_column_exists('orders', 'guest_id')) {
+            $ordStmt = $pdo->prepare('SELECT guest_id FROM orders WHERE id = ? AND restaurant_id = ? LIMIT 1');
+            $ordStmt->execute([$orderId, $restaurantId]);
+            $loyaltyGuestId = (int)($ordStmt->fetchColumn() ?: 0);
+        }
+
+        $guest = crm_upsert_guest($restaurantId, $norm, $marketingConsent, $loyaltyGuestId > 0 ? $loyaltyGuestId : null);
+        if (!$guest || empty($guest['id'])) {
+            return false;
+        }
+        $gid = (int)$guest['id'];
+
+        if (crm_orders_have_crm_guest_id()) {
+            $updOrder = $pdo->prepare('UPDATE orders SET crm_guest_id = ? WHERE id = ? AND restaurant_id = ?');
+            $updOrder->execute([$gid, $orderId, $restaurantId]);
+        }
+        return true;
+    } catch (Throwable $e) {
+        if (function_exists('error_log')) {
+            error_log('crm_touch_visit_after_qr_order rid=' . $restaurantId . ' oid=' . $orderId . ' ' . $e->getMessage());
+        }
+        return false;
+    }
+}
+
+/**
  * List outbox rows for restaurant (for UI).
  * @return array<array>
  */
 function crm_list_outbox(int $restaurantId, string $status = 'pending', int $limit = 200): array
 {
     if ($restaurantId <= 0 || !function_exists('db') || !crm_outbox_table_ready()) {
+        return [];
+    }
+    if (!function_exists('db_table_exists') || !db_table_exists('crm_guests')) {
         return [];
     }
 
@@ -654,6 +1107,130 @@ function crm_list_outbox(int $restaurantId, string $status = 'pending', int $lim
     );
     $stmt->execute([$restaurantId, $status]);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/**
+ * Manual-return work queue snapshot for restaurant CRM product UI.
+ *
+ * @return array{
+ *   total:int,
+ *   pending:int,
+ *   draft:int,
+ *   ready_manual:int,
+ *   processed:int,
+ *   canceled:int,
+ *   failed:int,
+ *   loyalty_rows:int,
+ *   loyalty_pending:int,
+ *   loyalty_draft:int,
+ *   loyalty_ready_manual:int,
+ *   loyalty_processed:int,
+ *   loyalty_in_work:int,
+ *   fallback_rows:int,
+ *   recent:list<array<string,mixed>>
+ * }
+ */
+function crm_manual_return_outbox_summary(int $restaurantId, int $days = 30, int $recentLimit = 6): array
+{
+    $restaurantId = (int)$restaurantId;
+    $days = max(1, min(180, $days));
+    $recentLimit = max(1, min(20, $recentLimit));
+    $empty = [
+        'total' => 0,
+        'pending' => 0,
+        'draft' => 0,
+        'ready_manual' => 0,
+        'processed' => 0,
+        'canceled' => 0,
+        'failed' => 0,
+        'loyalty_rows' => 0,
+        'loyalty_pending' => 0,
+        'loyalty_draft' => 0,
+        'loyalty_ready_manual' => 0,
+        'loyalty_processed' => 0,
+        'loyalty_in_work' => 0,
+        'fallback_rows' => 0,
+        'recent' => [],
+    ];
+    if ($restaurantId <= 0 || !function_exists('db') || !crm_outbox_table_ready() || !function_exists('db_table_exists') || !db_table_exists('crm_guests')) {
+        return $empty;
+    }
+
+    try {
+        $pdo = db();
+        $since = date('Y-m-d H:i:s', strtotime('-' . $days . ' days'));
+        $stmt = $pdo->prepare("
+            SELECT o.id, o.guest_id, o.template, o.payload_json, o.scheduled_at, o.status, o.created_at, g.phone
+            FROM crm_outbox o
+            JOIN crm_guests g ON g.id = o.guest_id AND g.restaurant_id = o.restaurant_id
+            WHERE o.restaurant_id = ?
+              AND o.template = 'manual_return'
+              AND o.created_at >= ?
+            ORDER BY o.created_at DESC
+            LIMIT 300
+        ");
+        $stmt->execute([$restaurantId, $since]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        if ($rows === []) {
+            return $empty;
+        }
+
+        $out = $empty;
+        foreach ($rows as $row) {
+            $status = (string)($row['status'] ?? '');
+            if (isset($out[$status])) {
+                $out[$status]++;
+            }
+            $out['total']++;
+
+            $payload = json_decode((string)($row['payload_json'] ?? '{}'), true);
+            if (!is_array($payload)) {
+                $payload = [];
+            }
+            $reason = (string)($payload['reason'] ?? '');
+            $segmentType = (string)($payload['segment_type'] ?? '');
+            $isLoyalty = $segmentType !== '' || str_starts_with($reason, 'loyalty_retention:');
+            if ($isLoyalty) {
+                $out['loyalty_rows']++;
+                if ($status === 'pending') {
+                    $out['loyalty_pending']++;
+                    $out['loyalty_in_work']++;
+                } elseif ($status === 'draft') {
+                    $out['loyalty_draft']++;
+                    $out['loyalty_in_work']++;
+                } elseif ($status === 'ready_manual') {
+                    $out['loyalty_ready_manual']++;
+                    $out['loyalty_in_work']++;
+                } elseif ($status === 'processed') {
+                    $out['loyalty_processed']++;
+                }
+            } else {
+                $out['fallback_rows']++;
+            }
+
+            if (count($out['recent']) < $recentLimit) {
+                $out['recent'][] = [
+                    'id' => (int)($row['id'] ?? 0),
+                    'phone' => (string)($row['phone'] ?? ''),
+                    'status' => $status,
+                    'created_at' => (string)($row['created_at'] ?? ''),
+                    'scheduled_at' => (string)($row['scheduled_at'] ?? ''),
+                    'segment_type' => $segmentType,
+                    'segment_label' => (string)($payload['segment_label'] ?? ''),
+                    'reason' => $reason,
+                    'template_name' => (string)($payload['template_name'] ?? ''),
+                    'draft_title' => (string)($payload['draft_title'] ?? ''),
+                    'is_loyalty' => $isLoyalty,
+                ];
+            }
+        }
+        return $out;
+    } catch (Throwable $e) {
+        if (function_exists('error_log')) {
+            error_log('crm_manual_return_outbox_summary ' . $e->getMessage());
+        }
+        return $empty;
+    }
 }
 
 /**
@@ -918,58 +1495,7 @@ function crm_guest_ui_segment(array $row, ?int $restaurantId = null): string
  */
 function crm_restaurant_guests_dashboard_rows(int $restaurantId): array
 {
-    if ($restaurantId <= 0 || !function_exists('db') || !function_exists('db_table_exists') || !db_table_exists('crm_guests')) {
-        return [];
-    }
-
-    $pdo = db();
-    $amountCol = crm_orders_amount_column();
-    $hasGuestId = db_column_exists('orders', 'guest_id');
-    $hasPayment = db_column_exists('orders', 'payment_status');
-
-    try {
-        if ($hasGuestId && db_table_exists('orders')) {
-            $paidSql = $hasPayment ? " AND o.payment_status = 'paid' " : '';
-            $sql = "
-                SELECT g.id, g.restaurant_id, g.phone, g.consent, g.first_seen_at, g.last_seen_at, g.visits_count,
-                       COALESCE(a.order_count, 0) AS order_count,
-                       COALESCE(a.total_spent, 0) AS total_spent,
-                       a.last_order_at
-                FROM crm_guests g
-                LEFT JOIN (
-                    SELECT o.guest_id AS gid,
-                           COUNT(*) AS order_count,
-                           SUM(COALESCE(o.{$amountCol}, 0)) AS total_spent,
-                           MAX(o.created_at) AS last_order_at
-                    FROM orders o
-                    WHERE o.restaurant_id = :rid_o
-                      AND o.guest_id IS NOT NULL AND o.guest_id > 0
-                      {$paidSql}
-                    GROUP BY o.guest_id
-                ) a ON a.gid = g.id
-                WHERE g.restaurant_id = :rid
-                ORDER BY COALESCE(g.last_seen_at, a.last_order_at, g.created_at) DESC
-            ";
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute(['rid_o' => $restaurantId, 'rid' => $restaurantId]);
-        } else {
-            $stmt = $pdo->prepare("
-                SELECT g.id, g.restaurant_id, g.phone, g.consent, g.first_seen_at, g.last_seen_at, g.visits_count,
-                       0 AS order_count, 0 AS total_spent, NULL AS last_order_at
-                FROM crm_guests g
-                WHERE g.restaurant_id = ?
-                ORDER BY g.last_seen_at DESC, g.id DESC
-            ");
-            $stmt->execute([$restaurantId]);
-        }
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        return is_array($rows) ? $rows : [];
-    } catch (Throwable $e) {
-        if (function_exists('error_log')) {
-            error_log('crm_restaurant_guests_dashboard_rows rid=' . $restaurantId . ' ' . $e->getMessage());
-        }
-        return [];
-    }
+    return crm_confirmed_guest_metrics_rows($restaurantId);
 }
 
 /**
@@ -982,7 +1508,7 @@ function crm_guest_orders_history(int $restaurantId, int $guestId, int $limit = 
     if ($restaurantId <= 0 || $guestId <= 0 || !crm_guest_lookup($restaurantId, $guestId)) {
         return [];
     }
-    if (!function_exists('db_table_exists') || !db_table_exists('orders') || !db_column_exists('orders', 'guest_id')) {
+    if (!function_exists('db_table_exists') || !db_table_exists('orders')) {
         return [];
     }
 
@@ -990,16 +1516,70 @@ function crm_guest_orders_history(int $restaurantId, int $guestId, int $limit = 
     $amountCol = crm_orders_amount_column();
     $limit = max(1, min(100, $limit));
     try {
+        $guest = crm_guest_lookup($restaurantId, $guestId);
+        if (!$guest) {
+            return [];
+        }
+        $where = [];
+        $params = [$restaurantId];
+        if (crm_orders_have_crm_guest_id()) {
+            $where[] = 'crm_guest_id = ?';
+            $params[] = $guestId;
+        }
+        if (crm_guests_have_loyalty_guest_id() && db_column_exists('orders', 'guest_id')) {
+            $loyaltyGuestId = (int)($guest['loyalty_guest_id'] ?? 0);
+            if ($loyaltyGuestId > 0) {
+                $where[] = '((crm_guest_id IS NULL OR crm_guest_id = 0) AND guest_id = ?)';
+                $params[] = $loyaltyGuestId;
+            }
+        }
+        if ($where === []) {
+            return [];
+        }
         $stmt = $pdo->prepare("
             SELECT id, created_at, {$amountCol} AS order_total, order_status, payment_status
             FROM orders
-            WHERE restaurant_id = ? AND guest_id = ?
+            WHERE restaurant_id = ? AND (" . implode(' OR ', $where) . ")
+            ORDER BY created_at DESC
+            LIMIT {$limit}
+        ");
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        return [];
+    }
+}
+
+/**
+ * Recent manual_return rows for one CRM guest.
+ *
+ * @return array<int,array<string,mixed>>
+ */
+function crm_guest_manual_return_history(int $restaurantId, int $guestId, int $limit = 10): array
+{
+    if ($restaurantId <= 0 || $guestId <= 0 || !function_exists('db') || !crm_outbox_table_ready()) {
+        return [];
+    }
+
+    $limit = max(1, min(50, $limit));
+    try {
+        $pdo = db();
+        $stmt = $pdo->prepare("
+            SELECT id, guest_id, channel, template, payload_json, scheduled_at, status, created_at
+            FROM crm_outbox
+            WHERE restaurant_id = ?
+              AND guest_id = ?
+              AND channel = 'manual'
+              AND template = 'manual_return'
             ORDER BY created_at DESC
             LIMIT {$limit}
         ");
         $stmt->execute([$restaurantId, $guestId]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     } catch (Throwable $e) {
+        if (function_exists('error_log')) {
+            error_log('crm_guest_manual_return_history ' . $e->getMessage());
+        }
         return [];
     }
 }
@@ -1092,11 +1672,12 @@ function crm_outbox_insert_manual_return_row(int $restaurantId, int $guestId, ar
 }
 
 /**
- * Recent blocking manual_return row for guest (anti-duplicate for retention drafts).
+ * Recent blocking manual_return row for guest (anti-duplicate for retention drafts),
+ * enriched with payload metadata for CRM product UI.
  *
  * @return array<string, mixed>|null
  */
-function crm_outbox_recent_blocking_manual_return(int $restaurantId, int $guestId, int $lookbackDays = 7): ?array
+function crm_outbox_recent_blocking_manual_return_state(int $restaurantId, int $guestId, int $lookbackDays = 7): ?array
 {
     if ($restaurantId <= 0 || $guestId <= 0 || !function_exists('db') || !crm_outbox_table_ready()) {
         return null;
@@ -1105,7 +1686,7 @@ function crm_outbox_recent_blocking_manual_return(int $restaurantId, int $guestI
     $pdo = db();
     try {
         $stmt = $pdo->prepare(
-            "SELECT id, status, created_at, template, channel
+            "SELECT id, status, created_at, template, channel, payload_json
              FROM crm_outbox
              WHERE restaurant_id = ?
                AND guest_id = ?
@@ -1118,11 +1699,34 @@ function crm_outbox_recent_blocking_manual_return(int $restaurantId, int $guestI
         );
         $stmt->execute([$restaurantId, $guestId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            return null;
+        }
 
-        return $row ?: null;
+        $payload = json_decode((string)($row['payload_json'] ?? '{}'), true);
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $row['segment_type'] = (string)($payload['segment_type'] ?? '');
+        $row['segment_label'] = (string)($payload['segment_label'] ?? '');
+        $row['template_key'] = (string)($payload['template_key'] ?? '');
+        $row['template_name'] = (string)($payload['template_name'] ?? '');
+        $row['reason'] = (string)($payload['reason'] ?? '');
+        $row['draft_title'] = (string)($payload['draft_title'] ?? '');
+
+        return $row;
     } catch (Throwable $e) {
         return null;
     }
+}
+
+/**
+ * @return array<string, mixed>|null
+ */
+function crm_outbox_recent_blocking_manual_return(int $restaurantId, int $guestId, int $lookbackDays = 7): ?array
+{
+    return crm_outbox_recent_blocking_manual_return_state($restaurantId, $guestId, $lookbackDays);
 }
 
 /**

@@ -2,12 +2,33 @@
 /**
  * Smart Upsell Rules v2: filter and limit candidate upsell items.
  */
+if (file_exists(__DIR__ . '/runtime_schema_bootstrap.php')) {
+    require_once __DIR__ . '/runtime_schema_bootstrap.php';
+}
 
 /**
  * @return array<array{id:int, rule_type:string, rule_value:?string, priority:int, active:int}>
  */
 function upsell_rules_get(int $restaurantId): array
 {
+    static $schemaEnsured = false;
+    if (!$schemaEnsured && function_exists('runtime_schema_ensure_upsell_rules')) {
+        $schemaEnsured = true;
+        try {
+            runtime_schema_ensure_upsell_rules(db());
+        } catch (Throwable $e) {
+            // keep graceful fallback behavior on legacy/readonly environments
+        }
+    }
+
+    static $tableAvailable = null;
+    if ($tableAvailable === null) {
+        $tableAvailable = function_exists('db_table_exists') ? db_table_exists('upsell_rules') : true;
+    }
+    if (!$tableAvailable) {
+        return [];
+    }
+
     try {
         $pdo = db();
         $stmt = $pdo->prepare("
@@ -19,7 +40,12 @@ function upsell_rules_get(int $restaurantId): array
         $stmt->execute([$restaurantId]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (Throwable $e) {
-        error_log('upsell_rules_get ' . $e->getMessage());
+        $msg = (string)$e->getMessage();
+        if (stripos($msg, "doesn't exist") !== false || stripos($msg, 'Base table or view not found') !== false) {
+            $tableAvailable = false;
+            return [];
+        }
+        error_log('upsell_rules_get ' . $msg);
         return [];
     }
 }
@@ -111,7 +137,11 @@ function upsell_rules_apply(
             }
         }
     } catch (Throwable $e) {
-        error_log('upsell_rules_apply ' . $e->getMessage());
+        $msg = (string)$e->getMessage();
+        if (stripos($msg, "doesn't exist") !== false || stripos($msg, 'Base table or view not found') !== false) {
+            return $out;
+        }
+        error_log('upsell_rules_apply ' . $msg);
     }
 
     return $out;

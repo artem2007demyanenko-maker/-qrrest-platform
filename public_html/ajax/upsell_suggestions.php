@@ -18,7 +18,9 @@ if ($tableId <= 0) {
 }
 
 $pdo = db();
-$stmt = $pdo->prepare('SELECT id FROM tables WHERE id = :id AND restaurant_id = :r LIMIT 1');
+$stmt = $pdo->prepare(
+    'SELECT id FROM tables WHERE id = :id AND restaurant_id = :r LIMIT 1'
+);
 $stmt->execute([':id' => $tableId, ':r' => (int)$currentRestaurant['id']]);
 if (!$stmt->fetchColumn()) {
     echo json_encode(['success' => false, 'error' => 'table_not_found'], JSON_UNESCAPED_UNICODE);
@@ -38,13 +40,23 @@ if (!$upsellEnabled) {
     exit;
 }
 
-$guestUpsellOn = upsell_guest_layer_enabled($currentRestaurant, $upsellEnabled);
+$mode = isset($_GET['mode']) ? trim((string)$_GET['mode']) : 'context';
+$guestMode = ($mode === 'cart') ? 'cart' : 'menu';
+
+$guestUpsellOn = function_exists('upsell_guest_mode_enabled')
+    ? upsell_guest_mode_enabled($currentRestaurant, $upsellEnabled, $guestMode)
+    : upsell_guest_layer_enabled($currentRestaurant, $upsellEnabled);
 if (!$guestUpsellOn) {
     echo json_encode(['success' => true, 'enabled' => false, 'suggestions' => []], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-$limit = upsell_guest_max_items($currentRestaurant);
+$limit = function_exists('upsell_guest_mode_max_items')
+    ? upsell_guest_mode_max_items($currentRestaurant, $guestMode)
+    : upsell_guest_max_items($currentRestaurant);
+$modeFlags = function_exists('upsell_guest_mode_flags')
+    ? upsell_guest_mode_flags($currentRestaurant, $guestMode)
+    : [];
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -56,7 +68,6 @@ if (!is_array($cart)) {
     $cart = [];
 }
 
-$mode = isset($_GET['mode']) ? trim((string)$_GET['mode']) : 'context';
 $cartTotal = isset($_GET['cart_total']) ? (float)$_GET['cart_total'] : 0.0;
 if ($cartTotal <= 0) {
     $ctx = extract_cart_context((int)$currentRestaurant['id'], $cart, []);
@@ -65,12 +76,31 @@ if ($cartTotal <= 0) {
 
 $sessionViews = (int)($_SESSION['upsell_views'] ?? 0);
 $orderUpsellCount = (int)($_GET['upsell_added_count'] ?? 0);
-
-if ($mode === 'cart') {
-    $items = get_cart_upsells((int)$currentRestaurant['id'], $cartTotal, $cart, 1000.0, $sessionViews, $orderUpsellCount, $limit);
-} else {
-    $items = get_contextual_upsells((int)$currentRestaurant['id'], $cart, [], $sessionViews, $orderUpsellCount, $limit);
+$triggerItemId = isset($_GET['trigger_item_id']) ? (int)$_GET['trigger_item_id'] : 0;
+$triggerItemId = $triggerItemId > 0 ? $triggerItemId : null;
+$orderType = strtolower(trim((string)($_GET['order_type'] ?? 'hall')));
+if (!in_array($orderType, ['hall', 'delivery', 'pickup', 'preorder', 'manual'], true)) {
+    $orderType = 'hall';
 }
+
+$items = upsell_recommendations(
+    (int)$currentRestaurant['id'],
+    $cart,
+    array_merge(
+        [
+            'mode' => $mode === 'cart' ? 'cart' : 'context',
+            'limit' => $limit,
+            'order_type' => $orderType,
+            'cart_total' => $cartTotal,
+            'trigger_item_id' => $triggerItemId,
+            'session_views' => $sessionViews,
+            'order_upsell_count' => $orderUpsellCount,
+            'table_id' => $tableId,
+            'cart_threshold' => 1000.0,
+        ],
+        is_array($modeFlags) ? $modeFlags : []
+    )
+);
 
 // Parity with qr_offers.php: enforce restaurant-level offer limit.
 if ($limit > 0 && count($items) > $limit) {
@@ -92,4 +122,10 @@ foreach ($items as $it) {
     ];
 }
 
-echo json_encode(['success' => true, 'enabled' => true, 'suggestions' => $suggestions], JSON_UNESCAPED_UNICODE);
+echo json_encode([
+    'success' => true,
+    'enabled' => true,
+    'mode' => $guestMode,
+    'order_type' => $orderType,
+    'suggestions' => $suggestions,
+], JSON_UNESCAPED_UNICODE);

@@ -17,10 +17,36 @@ if (!$currentRestaurant) {
     json_error('Контекст ресторана не найден', 404);
 }
 
-require_restaurant_role((int)$currentRestaurant['id'], ['staff','admin','owner']);
+require_waiter_access((int)$currentRestaurant['id']);
 
 $user = auth_user();
 $pdo  = db();
+if (file_exists(__DIR__ . '/../../app/runtime_schema_bootstrap.php')) {
+    require_once __DIR__ . '/../../app/runtime_schema_bootstrap.php';
+    if (function_exists('runtime_schema_ensure_guest_profiles')) {
+        runtime_schema_ensure_guest_profiles($pdo);
+    }
+    if (function_exists('runtime_schema_ensure_menu_items_availability')) {
+        runtime_schema_ensure_menu_items_availability($pdo);
+    }
+    if (function_exists('runtime_schema_ensure_production_stations')) {
+        runtime_schema_ensure_production_stations($pdo);
+    }
+}
+
+$hasOrdersPaymentType = function_exists('db_column_exists') && db_column_exists('orders', 'payment_type');
+$hasOrdersTotalAmount = function_exists('db_column_exists') && db_column_exists('orders', 'total_amount');
+$hasOrdersOrderType = function_exists('db_column_exists') && db_column_exists('orders', 'order_type');
+$hasOrdersComment = function_exists('db_column_exists') && db_column_exists('orders', 'comment');
+$hasOrdersNotes = function_exists('db_column_exists') && db_column_exists('orders', 'notes');
+$hasOrdersCustomerName = function_exists('db_column_exists') && db_column_exists('orders', 'customer_name');
+$hasOrdersCustomerPhone = function_exists('db_column_exists') && db_column_exists('orders', 'customer_phone');
+$hasOrderItemsMenuItemId = function_exists('db_column_exists') && db_column_exists('order_items', 'menu_item_id');
+$hasOrderItemsItemName = function_exists('db_column_exists') && db_column_exists('order_items', 'item_name');
+$hasOrderItemsQty = function_exists('db_column_exists') && db_column_exists('order_items', 'qty');
+$hasOrderItemsQuantity = function_exists('db_column_exists') && db_column_exists('order_items', 'quantity');
+$hasOrderItemsPrice = function_exists('db_column_exists') && db_column_exists('order_items', 'price');
+$hasOrderItemsProductionStation = function_exists('db_column_exists') && db_column_exists('order_items', 'production_station');
 
 $raw = file_get_contents('php://input');
 $data = json_decode($raw, true);
@@ -30,6 +56,14 @@ if (!is_array($data)) {
 
 $tableId     = isset($data['table_id']) ? (int)$data['table_id'] : 0;
 $paymentType = isset($data['payment_type']) ? (string)$data['payment_type'] : 'cash';
+$orderComment = trim((string)($data['comment'] ?? ''));
+$customerNameRaw = trim((string)($data['customer_name'] ?? ''));
+$customerNameRaw = function_exists('mb_substr') ? mb_substr($customerNameRaw, 0, 190) : substr($customerNameRaw, 0, 190);
+$customerPhoneRaw = trim((string)($data['customer_phone'] ?? ''));
+$customerPhoneNorm = function_exists('guest_normalize_phone') ? guest_normalize_phone($customerPhoneRaw) : null;
+$orderComment = function_exists('mb_substr')
+    ? mb_substr($orderComment, 0, 500)
+    : substr($orderComment, 0, 500);
 $items       = isset($data['items']) && is_array($data['items']) ? $data['items'] : [];
 
 if ($tableId <= 0) {
@@ -56,6 +90,10 @@ if (!$tableRow) {
     json_error('Стол не найден в этом ресторане');
 }
 
+if (function_exists('qr_public_is_delivery_table_row') && qr_public_is_delivery_table_row($tableRow)) {
+    json_error('Служебный стол доставки недоступен для POS');
+}
+
 
 $itemIds = [];
 foreach ($items as $row) {
@@ -71,11 +109,24 @@ if (empty($itemIds)) {
 
 
 $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
+$hasMenuProdStationCol = function_exists('db_column_exists') && db_column_exists('menu_items', 'production_station');
+$hasMenuStationCol = function_exists('db_column_exists') && db_column_exists('menu_items', 'station');
+$hasMenuKitchenStationCol = function_exists('db_column_exists') && db_column_exists('menu_items', 'kitchen_station');
+$hasMenuTemporaryUnavailableCol = function_exists('db_column_exists') && db_column_exists('menu_items', 'is_temporarily_unavailable');
+$menuTempUnavailableCond = $hasMenuTemporaryUnavailableCol
+    ? " AND COALESCE(is_temporarily_unavailable, 0) = 0 "
+    : '';
+$menuProdStationExpr = "LOWER(COALESCE("
+    . "NULLIF(TRIM(" . ($hasMenuProdStationCol ? "production_station" : "''") . "), ''),"
+    . "NULLIF(TRIM(" . ($hasMenuStationCol ? "station" : "''") . "), ''),"
+    . "NULLIF(TRIM(" . ($hasMenuKitchenStationCol ? "kitchen_station" : "''") . "), ''),"
+    . "'kitchen')) AS production_station";
 $sql = "
-    SELECT id, name, price
+    SELECT id, name, price, {$menuProdStationExpr}
     FROM menu_items
     WHERE restaurant_id = ?
       AND available = 1
+      {$menuTempUnavailableCond}
       AND id IN ($placeholders)
 ";
 $params = [(int)$currentRestaurant['id']];
@@ -104,6 +155,7 @@ foreach ($dbItems as $row) {
         'name'  => $row['name'],
         'qty'   => $qty,
         'price' => $price,
+        'production_station' => strtolower(trim((string)($row['production_station'] ?? 'kitchen'))),
     ];
 }
 if (empty($orderItems)) {
@@ -121,6 +173,7 @@ try {
         'rid' => (int)$currentRestaurant['id'],
         'table_id' => $tableId,
         'payment_type' => $paymentType,
+        'comment' => $orderComment,
         'items' => $itemIds,
     ], JSON_UNESCAPED_UNICODE));
     if (!isset($_SESSION['pos_order_idem']) || !is_array($_SESSION['pos_order_idem'])) {
@@ -160,63 +213,155 @@ try {
     $pdo->beginTransaction();
 
 
-    if ($hasOrdersFlowIdCol && $flowId !== null) {
-        $stmt = $pdo->prepare("
-            INSERT INTO orders
-                (restaurant_id, table_id, total_price, total_amount,
-                 payment_type, payment_status, order_status, created_at, flow_id)
-            VALUES
-                (:rid, :table_id, :total_price, :total_amount,
-                 :payment_type, :payment_status, :order_status, NOW(), :flow_id)
-        ");
-        $stmt->execute([
-            ':rid'            => (int)$currentRestaurant['id'],
-            ':table_id'       => $tableId,
-            ':total_price'    => $total,
-            ':total_amount'   => $total,
-            ':payment_type'   => $paymentType,
-            ':payment_status' => $paymentStatus,
-            ':order_status'   => 'new',
-            ':flow_id'        => (string)$flowId,
-        ]);
-    } else {
-        $stmt = $pdo->prepare("
-            INSERT INTO orders
-                (restaurant_id, table_id, total_price, total_amount,
-                 payment_type, payment_status, order_status, created_at)
-            VALUES
-                (:rid, :table_id, :total_price, :total_amount,
-                 :payment_type, :payment_status, :order_status, NOW())
-        ");
-        $stmt->execute([
-            ':rid'            => (int)$currentRestaurant['id'],
-            ':table_id'       => $tableId,
-            ':total_price'    => $total,
-            ':total_amount'   => $total,
-            ':payment_type'   => $paymentType,
-            ':payment_status' => $paymentStatus,
-            ':order_status'   => 'new',
-        ]);
+    $orderCols = ['restaurant_id', 'table_id', 'total_price'];
+    $orderVals = [':rid', ':table_id', ':total_price'];
+    $orderParams = [
+        ':rid' => (int)$currentRestaurant['id'],
+        ':table_id' => $tableId,
+        ':total_price' => $total,
+    ];
+    if ($hasOrdersTotalAmount) {
+        $orderCols[] = 'total_amount';
+        $orderVals[] = ':total_amount';
+        $orderParams[':total_amount'] = $total;
     }
+    if ($hasOrdersPaymentType) {
+        $orderCols[] = 'payment_type';
+        $orderVals[] = ':payment_type';
+        $orderParams[':payment_type'] = $paymentType;
+    }
+    $orderCols[] = 'payment_status';
+    $orderVals[] = ':payment_status';
+    $orderParams[':payment_status'] = $paymentStatus;
+    $orderCols[] = 'order_status';
+    $orderVals[] = ':order_status';
+    $orderParams[':order_status'] = 'new';
+    if ($hasOrdersOrderType) {
+        $orderCols[] = 'order_type';
+        $orderVals[] = ':order_type';
+        $orderParams[':order_type'] = 'manual';
+    }
+    if ($orderComment !== '') {
+        if ($hasOrdersComment) {
+            $orderCols[] = 'comment';
+            $orderVals[] = ':comment';
+            $orderParams[':comment'] = $orderComment;
+        } elseif ($hasOrdersNotes) {
+            $orderCols[] = 'notes';
+            $orderVals[] = ':notes';
+            $orderParams[':notes'] = $orderComment;
+        }
+    }
+    if ($hasOrdersCustomerName && $customerNameRaw !== '') {
+        $orderCols[] = 'customer_name';
+        $orderVals[] = ':customer_name';
+        $orderParams[':customer_name'] = $customerNameRaw;
+    }
+    if ($hasOrdersCustomerPhone && $customerPhoneNorm !== null) {
+        $orderCols[] = 'customer_phone';
+        $orderVals[] = ':customer_phone';
+        $orderParams[':customer_phone'] = $customerPhoneNorm;
+    }
+    $orderCols[] = 'created_at';
+    $orderVals[] = 'NOW()';
+
+    if ($hasOrdersFlowIdCol && $flowId !== null) {
+        $orderCols[] = 'flow_id';
+        $orderVals[] = ':flow_id';
+        $orderParams[':flow_id'] = (string)$flowId;
+    }
+
+    $insertSql = "INSERT INTO orders (" . implode(', ', $orderCols) . ") VALUES (" . implode(', ', $orderVals) . ")";
+    $stmt = $pdo->prepare($insertSql);
+    $stmt->execute($orderParams);
     $orderId = (int)$pdo->lastInsertId();
 
-    // Позиции заказа
-    $stmtItem = $pdo->prepare("
-        INSERT INTO order_items (order_id, menu_item_id, quantity, price)
-        VALUES (:order_id, :menu_item_id, :quantity, :price)
-    ");
+    // Позиции заказа (schema-safe for legacy order_items variants).
+    $itemCols = ['order_id'];
+    $itemVals = [':order_id'];
+    if ($hasOrderItemsMenuItemId) {
+        $itemCols[] = 'menu_item_id';
+        $itemVals[] = ':menu_item_id';
+    }
+    if ($hasOrderItemsItemName) {
+        $itemCols[] = 'item_name';
+        $itemVals[] = ':item_name';
+    }
+    if ($hasOrderItemsQty) {
+        $itemCols[] = 'qty';
+        $itemVals[] = ':qty';
+    }
+    if ($hasOrderItemsQuantity) {
+        $itemCols[] = 'quantity';
+        $itemVals[] = ':quantity';
+    }
+    if ($hasOrderItemsPrice) {
+        $itemCols[] = 'price';
+        $itemVals[] = ':price';
+    }
+    if ($hasOrderItemsProductionStation) {
+        $itemCols[] = 'production_station';
+        $itemVals[] = ':production_station';
+    }
+    if (count($itemCols) < 2) {
+        throw new RuntimeException('order_items schema unsupported for POS create');
+    }
+    $stmtItem = $pdo->prepare(
+        "INSERT INTO order_items (" . implode(', ', $itemCols) . ") VALUES (" . implode(', ', $itemVals) . ")"
+    );
 
     foreach ($orderItems as $oi) {
-        $stmtItem->execute([
-            ':order_id'    => $orderId,
-            ':menu_item_id'=> $oi['id'],
-            ':quantity'    => $oi['qty'],
-            ':price'       => $oi['price'],
-        ]);
+        $itemParams = [
+            ':order_id' => $orderId,
+        ];
+        if ($hasOrderItemsMenuItemId) {
+            $itemParams[':menu_item_id'] = $oi['id'];
+        }
+        if ($hasOrderItemsItemName) {
+            $itemParams[':item_name'] = (string)$oi['name'];
+        }
+        if ($hasOrderItemsQty) {
+            $itemParams[':qty'] = $oi['qty'];
+        }
+        if ($hasOrderItemsQuantity) {
+            $itemParams[':quantity'] = $oi['qty'];
+        }
+        if ($hasOrderItemsPrice) {
+            $itemParams[':price'] = $oi['price'];
+        }
+        if ($hasOrderItemsProductionStation) {
+            $rawStation = strtolower(trim((string)($oi['production_station'] ?? 'kitchen')));
+            if (!in_array($rawStation, ['kitchen', 'bar', 'cold', 'dessert', 'hookah', 'grill', 'pizza', 'sushi'], true)) {
+                $rawStation = ($rawStation === 'hot') ? 'kitchen' : 'kitchen';
+            }
+            $itemParams[':production_station'] = $rawStation;
+        }
+        $stmtItem->execute($itemParams);
     }
 
     $pdo->commit();
     $_SESSION['pos_order_idem'][$idemKey] = ['state' => 'done', 'order_id' => $orderId, 'ts' => time()];
+
+    if (function_exists('crm_guest_profile_touch')) {
+        try {
+            crm_guest_profile_touch($pdo, (int)$currentRestaurant['id'], [
+                'order_id' => (int)$orderId,
+                'order_type' => 'manual',
+                'total_price' => (float)$total,
+                'created_at' => date('Y-m-d H:i:s'),
+                'customer_name' => $customerNameRaw,
+                'customer_phone' => $customerPhoneNorm ?? $customerPhoneRaw,
+                'delivery_phone' => '',
+                'guest_phone' => '',
+                'guest_name' => '',
+                'loyalty_phone' => '',
+            ]);
+        } catch (Throwable $eCrmProfile) {
+            if (function_exists('error_log')) {
+                error_log('POS_CRM_GUEST_PROFILE_TOUCH_FAIL order_id=' . (int)$orderId . ' ' . $eCrmProfile->getMessage());
+            }
+        }
+    }
 
     // Логирование
     if (function_exists('add_log')) {
@@ -224,6 +369,12 @@ try {
         $lines[] = 'POS-заказ #' . $orderId . ' создан сотрудником #' . (int)$user['id'];
         $lines[] = 'Стол: ' . $tableRow['name'] . ' (ID ' . (int)$tableRow['id'] . ')';
         $lines[] = 'Оплата: ' . $paymentType . ' / статус оплаты: ' . $paymentStatus;
+        if ($hasOrdersOrderType) {
+            $lines[] = 'Тип заказа: manual';
+        }
+        if ($orderComment !== '') {
+            $lines[] = 'Комментарий: ' . $orderComment;
+        }
         $lines[] = 'Сумма: ' . round($total) . ' руб.';
         $lines[] = 'Позиций: ' . count($orderItems);
 
@@ -255,7 +406,7 @@ try {
     ], JSON_UNESCAPED_UNICODE);
     exit;
 
-} catch (PDOException $e) {
+} catch (Throwable $e) {
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }

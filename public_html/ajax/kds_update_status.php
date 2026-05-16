@@ -2,6 +2,8 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../app/bootstrap.php';
+require_once __DIR__ . '/../../app/order_payment_runtime.php';
+require_once __DIR__ . '/../../app/guest_order_loyalty_attach.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -11,15 +13,30 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-require_login();
-
+if (!function_exists('require_kitchen_access')) {
+    http_response_code(500);
+    echo json_encode(['success' => false, 'message' => 'auth_unavailable'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+require_kitchen_access();
 if (!$currentRestaurant) {
     http_response_code(404);
     echo json_encode(['success' => false, 'message' => 'Restaurant context required'], JSON_UNESCAPED_UNICODE);
     exit;
 }
-
-require_restaurant_role((int)$currentRestaurant['id'], ['staff', 'admin', 'owner']);
+$restaurantId = (int)($currentRestaurant['id'] ?? 0);
+$staffRole = function_exists('current_user_restaurant_role')
+    ? normalize_restaurant_role((string)(current_user_restaurant_role($restaurantId) ?? ''))
+    : '';
+if ($staffRole === 'bar' || (
+    function_exists('restaurant_role_is_station_role')
+    && restaurant_role_is_station_role($staffRole)
+    && $staffRole !== 'kitchen'
+)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'station_access_denied'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
 
 if (function_exists('is_demo_mode') && is_demo_mode()) {
     echo json_encode(['success' => false, 'message' => 'В демо-режиме статус не изменяется'], JSON_UNESCAPED_UNICODE);
@@ -58,9 +75,27 @@ if (!isset($statusMap[$statusIn])) {
 $newDbStatus = $statusMap[$statusIn];
 
 $pdo = db();
-$restId = (int)$currentRestaurant['id'];
+$restId = $restaurantId;
+
+function kds_orders_sync_loyalty_safe(PDO $pdo, array $restaurantRow, int $orderId): void
+{
+    if (!function_exists('guest_order_loyalty_sync')) {
+        return;
+    }
+
+    try {
+        $res = guest_order_loyalty_sync($pdo, $restaurantRow, $orderId, null);
+        if (!is_array($res) || empty($res['ok'])) {
+            error_log('kds_update_status loyalty_sync order_id=' . $orderId . ' error=' . (string)($res['error'] ?? 'unknown'));
+        }
+    } catch (Throwable $e) {
+        error_log('kds_update_status loyalty_sync order_id=' . $orderId . ' ' . $e->getMessage());
+    }
+}
 
 try {
+    order_expire_due_orders($pdo, $restId, $orderId);
+
     $stmt = $pdo->prepare("SELECT id, order_status FROM orders WHERE id = :id AND restaurant_id = :rest LIMIT 1");
     $stmt->execute([':id' => $orderId, ':rest' => $restId]);
     $order = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -70,6 +105,10 @@ try {
     }
 
     $old = (string)($order['order_status'] ?? '');
+    if (strtolower($old) === 'canceled' && $newDbStatus !== 'canceled') {
+        echo json_encode(['success' => false, 'message' => 'Заказ уже отменён по таймауту'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
     // Restrict transitions to the safe kitchen flow only:
     // new -> accepted
     // accepted -> cooking
@@ -94,6 +133,8 @@ try {
         $upd->execute([':st' => $newDbStatus, ':id' => $orderId, ':rest' => $restId]);
     }
 
+    kds_orders_sync_loyalty_safe($pdo, $currentRestaurant, $orderId);
+
     // Keep existing CRM finalization behavior on status updates.
     if (file_exists(__DIR__ . '/../../app/crm_repo.php')) {
         require_once __DIR__ . '/../../app/crm_repo.php';
@@ -115,4 +156,3 @@ try {
     http_response_code(500);
     echo json_encode(['success' => false, 'message' => 'Ошибка обновления статуса'], JSON_UNESCAPED_UNICODE);
 }
-

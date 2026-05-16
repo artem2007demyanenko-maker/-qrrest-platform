@@ -10,6 +10,8 @@
     "smoke": "playwright test --project=chromium",
     "smoke:headed": "PLAYWRIGHT_HEADED=1 playwright test --project=chromium --headed",
     "smoke:report": "playwright show-report",
+    "smoke:strict": "QRREST_E2E_STRICT=1 playwright test --project=chromium",
+    "e2e:baseline": "php tools/e2e_baseline.php --apply",
     "test": "npm run smoke"
   },
   "keywords": [],
@@ -17,6 +19,10 @@
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "playwright": "^1.60.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2"
   }
 }

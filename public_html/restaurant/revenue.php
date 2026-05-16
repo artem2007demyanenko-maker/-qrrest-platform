@@ -2,6 +2,9 @@
 
 require_once __DIR__ . '/../../app/bootstrap.php';
 require_once __DIR__ . '/../../app/revenue_stats.php';
+if (file_exists(__DIR__ . '/../../app/schema_guard.php')) {
+    require_once __DIR__ . '/../../app/schema_guard.php';
+}
 
 require_login();
 require_current_restaurant();
@@ -15,12 +18,39 @@ $trialInfo = function_exists('trial_guard_trial_info') ? trial_guard_trial_info(
 
 $restId = (int)$currentRestaurant['id'];
 $days = 30;
-$stats = is_demo_mode() ? demo_revenue_stats() : revenue_stats_get($restId, $days);
+$revenueWarnings = [];
+$revenueSchema = [
+    'orders' => function_exists('db_table_exists') ? db_table_exists('orders') : true,
+    'order_items' => function_exists('db_table_exists') ? db_table_exists('order_items') : true,
+    'menu_items' => function_exists('db_table_exists') ? db_table_exists('menu_items') : true,
+];
+$revenueSchemaReady = $revenueSchema['orders'] && $revenueSchema['order_items'];
+if (!$revenueSchemaReady) {
+    foreach ($revenueSchema as $tableName => $isReady) {
+        if (!$isReady) {
+            $revenueWarnings[] = 'Данные ограничены: таблица ' . $tableName . ' отсутствует. Показаны fallback-значения.';
+            error_log('REVENUE_SCHEMA_MISSING table=' . $tableName . ' restaurant_id=' . $restId);
+        }
+    }
+}
+$statsFallback = [
+    'total_revenue' => 0.0,
+    'total_orders' => 0,
+    'avg_check' => 0.0,
+    'upsell_revenue' => 0.0,
+    'crm_return_visits' => 0,
+    'orders_per_day' => [],
+];
+$stats = is_demo_mode()
+    ? demo_revenue_stats()
+    : ($revenueSchemaReady ? revenue_stats_get($restId, $days) : $statsFallback);
 
 $menuPerformance = ['top' => [], 'low' => [], 'no_sales' => [], 'insights' => []];
 if (file_exists(__DIR__ . '/../../app/menu_performance.php')) {
     require_once __DIR__ . '/../../app/menu_performance.php';
-    $menuPerformance = menu_performance_insights($restId, 7);
+    if ($revenueSchema['orders'] && $revenueSchema['order_items'] && $revenueSchema['menu_items']) {
+        $menuPerformance = menu_performance_insights($restId, 7);
+    }
 }
 if (is_demo_mode() && empty($menuPerformance['insights'])) {
     $menuPerformance = [
@@ -35,9 +65,11 @@ $menuOpportunities = ['promote' => [], 'add_photo' => [], 'pair_with' => [], 'mo
 $menuWarnings = ['no_sales' => [], 'low_performer' => [], 'weak_category' => []];
 if (file_exists(__DIR__ . '/../../app/menu_intelligence.php')) {
     require_once __DIR__ . '/../../app/menu_intelligence.php';
-    $menuIntel = get_menu_intelligence($restId);
-    $menuOpportunities = $menuIntel['opportunities'] ?? $menuOpportunities;
-    $menuWarnings = $menuIntel['warnings'] ?? $menuWarnings;
+    if ($revenueSchema['orders'] && $revenueSchema['menu_items']) {
+        $menuIntel = get_menu_intelligence($restId);
+        $menuOpportunities = $menuIntel['opportunities'] ?? $menuOpportunities;
+        $menuWarnings = $menuIntel['warnings'] ?? $menuWarnings;
+    }
 }
 
 $peakHours = ['hourly_counts' => [], 'peak_hour_range_text' => '', 'recommendation_text' => ''];
@@ -45,10 +77,10 @@ $menuHeatmap = ['top' => [], 'low' => [], 'no_sales' => [], 'has_data' => false]
 $checkoutConversion = ['started' => 0, 'completed' => 0, 'conversion_pct' => null, 'recommendation_text' => ''];
 $tableTurnoverRev = ['tables' => [], 'busiest_table' => '', 'recommendation_text' => '', 'has_data' => false];
 $benchmarkRev = ['available' => false];
-if (file_exists(__DIR__ . '/../../app/peak_hours.php')) { require_once __DIR__ . '/../../app/peak_hours.php'; $peakHours = get_peak_hours_summary($restId, 7); }
-if (file_exists(__DIR__ . '/../../app/menu_heatmap.php')) { require_once __DIR__ . '/../../app/menu_heatmap.php'; $menuHeatmap = get_menu_heatmap($restId, 7); }
-if (file_exists(__DIR__ . '/../../app/checkout_analytics.php')) { require_once __DIR__ . '/../../app/checkout_analytics.php'; $checkoutConversion = get_checkout_conversion($restId, 7); }
-if (file_exists(__DIR__ . '/../../app/table_turnover.php')) { require_once __DIR__ . '/../../app/table_turnover.php'; $tableTurnoverRev = get_table_turnover($restId, 7); }
+if (file_exists(__DIR__ . '/../../app/peak_hours.php') && $revenueSchema['orders']) { require_once __DIR__ . '/../../app/peak_hours.php'; $peakHours = get_peak_hours_summary($restId, 7); }
+if (file_exists(__DIR__ . '/../../app/menu_heatmap.php') && $revenueSchema['orders']) { require_once __DIR__ . '/../../app/menu_heatmap.php'; $menuHeatmap = get_menu_heatmap($restId, 7); }
+if (file_exists(__DIR__ . '/../../app/checkout_analytics.php') && $revenueSchema['orders']) { require_once __DIR__ . '/../../app/checkout_analytics.php'; $checkoutConversion = get_checkout_conversion($restId, 7); }
+if (file_exists(__DIR__ . '/../../app/table_turnover.php') && $revenueSchema['orders']) { require_once __DIR__ . '/../../app/table_turnover.php'; $tableTurnoverRev = get_table_turnover($restId, 7); }
 if (file_exists(__DIR__ . '/../../app/network_benchmark.php')) { require_once __DIR__ . '/../../app/network_benchmark.php'; $benchmarkRev = get_restaurant_benchmark($restId); }
 if (is_demo_mode()) {
     if ($peakHours['peak_hour_range_text'] === '') { $peakHours = ['hourly_counts' => array_fill(0, 24, 0), 'peak_hour_range_text' => 'Больше всего заказов 18:00–20:00', 'recommendation_text' => 'На пик усильте смену зала и бара.']; for ($i = 18; $i < 21; $i++) { $peakHours['hourly_counts'][$i] = 12 + $i; } }
@@ -81,37 +113,35 @@ $chartValues = array_values($stats['orders_per_day']);
     <link rel="stylesheet" href="/assets/css/motion.css">
     <link rel="stylesheet" href="/assets/css/polish.css">
 </head>
-<body class="min-h-screen bg-slate-950 text-slate-50 flex <?= is_demo_mode() ? 'demo-mode' : '' ?>">
+<body class="min-h-screen bg-slate-950 text-slate-50 flex overflow-x-hidden <?= is_demo_mode() ? 'demo-mode' : '' ?>">
+<?php
+$restaurantSidebarActive = 'revenue';
+$restaurantSidebarName = (string)($currentRestaurant['name'] ?? 'Ресторан');
+require __DIR__ . '/_sidebar_mobile.php';
+?>
 
-<aside class="w-64 bg-slate-950/80 border-r border-slate-800 p-4 hidden md:block">
-    <?= brand_restaurant_sidebar_header_html($currentRestaurant['name']) ?>
-    <nav class="sidebar-nav space-y-2 text-sm">
-        <a href="/restaurant/dashboard.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Обзор</a>
-        <a href="/restaurant/revenue.php" class="block px-3 py-2 rounded-lg sidebar-active">Доход</a>
-        <a href="/restaurant/menu_categories.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Категории меню</a>
-        <a href="/restaurant/menu_items.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Блюда</a>
-        <a href="/restaurant/tables.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Столы и QR</a>
-        <a href="/restaurant/qr_print.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">QR Print</a>
-        <a href="/restaurant/floorplan.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Карта столов</a>
-        <a href="/restaurant/orders.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Заказы</a>
-        <a href="/restaurant/upsells.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Допродажи</a>
-        <a href="/restaurant/upsell_rules.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Правила допродаж</a>
-        <a href="/restaurant/analytics_upsell.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Аналитика допродаж</a>
-        <a href="/restaurant/crm.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">CRM</a>
-        <a href="/restaurant/crm_campaigns.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">CRM кампании</a>
-        <a href="/restaurant/staff.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Сотрудники</a>
-        <a href="/restaurant/setup.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Setup</a>
-        <a href="/restaurant/settings.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Настройки</a>
-        <a href="/logout.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60 text-red-300">Выйти</a>
-    </nav>
-</aside>
+<?php
+require __DIR__ . '/_sidebar.php';
+?>
 
-<main class="flex-1 p-4">
+<main class="flex-1 min-w-0 p-4 md:p-6 overflow-x-hidden">
     <div class="page-enter max-w-6xl mx-auto space-y-8">
+        <?php
+        $businessNavActive = 'revenue';
+        require __DIR__ . '/_restaurant_cabinet_context.php';
+        require __DIR__ . '/_restaurant_business_nav.php';
+        ?>
         <?php if (is_demo_mode()): ?>
-        <div class="rounded-xl bg-amber-500/10 border border-amber-500/40 px-4 py-2.5 flex items-center justify-center gap-2 text-sm text-amber-200">
+        <div class="rounded-xl bg-amber-500/10 border border-amber-500/40 px-4 py-2.5 flex flex-wrap items-center justify-center gap-2 text-sm text-amber-200 text-center">
             <span aria-hidden="true">⚠</span>
-            <span>Demo environment — actions are simulated.</span>
+            <span>Демо-среда: показатели и действия имитируются.</span>
+        </div>
+        <?php endif; ?>
+        <?php if ($revenueWarnings): ?>
+        <div class="rounded-xl bg-amber-500/10 border border-amber-500/40 px-4 py-2.5 text-sm text-amber-200 space-y-1" role="status">
+            <?php foreach ($revenueWarnings as $warning): ?>
+                <div><?= e($warning) ?></div>
+            <?php endforeach; ?>
         </div>
         <?php endif; ?>
         <?php if ($trialRequiresUpgrade): ?>
@@ -134,7 +164,7 @@ $chartValues = array_values($stats['orders_per_day']);
 
         <!-- Revenue overview: KPI row -->
         <section class="space-y-6">
-            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Revenue overview</h3>
+            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Сводка по выручке</h3>
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 <div class="dashboard-card rounded-xl border border-gray-800 bg-[#121826] shadow-lg p-5 card-motion flex items-start gap-3">
                     <div class="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center flex-shrink-0 text-emerald-400">
@@ -142,7 +172,7 @@ $chartValues = array_values($stats['orders_per_day']);
                     </div>
                     <div class="min-w-0">
                         <div class="text-2xl font-bold text-emerald-400"><?= number_format($stats['total_revenue'], 0, '.', ' ') ?> ₽</div>
-                        <div class="text-xs text-gray-400 uppercase tracking-wide mt-0.5">Revenue</div>
+                        <div class="text-xs text-gray-400 uppercase tracking-wide mt-0.5">Выручка</div>
                     </div>
                 </div>
                 <div class="dashboard-card rounded-xl border border-gray-800 bg-[#121826] shadow-lg p-5 card-motion flex items-start gap-3">
@@ -151,7 +181,7 @@ $chartValues = array_values($stats['orders_per_day']);
                     </div>
                     <div class="min-w-0">
                         <div class="text-2xl font-bold text-slate-100"><?= (int)$stats['total_orders'] ?></div>
-                        <div class="text-xs text-gray-400 uppercase tracking-wide mt-0.5">Orders</div>
+                        <div class="text-xs text-gray-400 uppercase tracking-wide mt-0.5">Заказы</div>
                     </div>
                 </div>
                 <div class="dashboard-card rounded-xl border border-gray-800 bg-[#121826] shadow-lg p-5 card-motion flex items-start gap-3">
@@ -160,7 +190,7 @@ $chartValues = array_values($stats['orders_per_day']);
                     </div>
                     <div class="min-w-0">
                         <div class="text-2xl font-bold text-sky-300"><?= number_format($stats['avg_check'], 0, '.', ' ') ?> ₽</div>
-                        <div class="text-xs text-gray-400 uppercase tracking-wide mt-0.5">Avg order</div>
+                        <div class="text-xs text-gray-400 uppercase tracking-wide mt-0.5">Средний чек</div>
                     </div>
                 </div>
                 <div class="dashboard-card rounded-xl border border-gray-800 bg-[#121826] shadow-lg p-5 card-motion flex items-start gap-3">
@@ -169,7 +199,7 @@ $chartValues = array_values($stats['orders_per_day']);
                     </div>
                     <div class="min-w-0">
                         <div class="text-2xl font-bold text-amber-300"><?= number_format($stats['upsell_revenue'], 0, '.', ' ') ?> ₽</div>
-                        <div class="text-xs text-gray-400 uppercase tracking-wide mt-0.5">Upsell revenue</div>
+                        <div class="text-xs text-gray-400 uppercase tracking-wide mt-0.5">Допродажи</div>
                     </div>
                 </div>
                 <div class="dashboard-card rounded-xl border border-gray-800 bg-[#121826] shadow-lg p-5 card-motion flex items-start gap-3">
@@ -178,7 +208,7 @@ $chartValues = array_values($stats['orders_per_day']);
                     </div>
                     <div class="min-w-0">
                         <div class="text-2xl font-bold text-violet-300"><?= (int)$stats['crm_return_visits'] ?></div>
-                        <div class="text-xs text-gray-400 uppercase tracking-wide mt-0.5">CRM return guests</div>
+                        <div class="text-xs text-gray-400 uppercase tracking-wide mt-0.5">Возвраты (CRM)</div>
                     </div>
                 </div>
             </div>
@@ -186,7 +216,7 @@ $chartValues = array_values($stats['orders_per_day']);
 
         <!-- Chart -->
         <section class="space-y-6">
-            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Orders per day</h3>
+            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Заказы по дням</h3>
             <div class="rounded-xl bg-gray-900/60 border border-gray-800 p-6 card-motion">
                 <div class="h-64">
                     <canvas id="ordersChart"></canvas>
@@ -196,7 +226,7 @@ $chartValues = array_values($stats['orders_per_day']);
 
         <!-- Menu performance insights -->
         <section class="space-y-6">
-            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Menu performance insights</h3>
+            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Меню: что продаётся</h3>
             <div class="rounded-xl bg-gray-900/60 border border-gray-800 p-6 card-motion">
                 <?php if (!empty($menuPerformance['insights'])): ?>
                     <ul class="space-y-2 mb-4">
@@ -208,7 +238,7 @@ $chartValues = array_values($stats['orders_per_day']);
                         <?php endforeach; ?>
                     </ul>
                     <?php if (!empty($menuPerformance['top'])): ?>
-                    <p class="text-xs text-slate-500 mt-3 mb-1">Top selling (last 7 days)</p>
+                    <p class="text-xs text-slate-500 mt-3 mb-1">Лидеры продаж (7 дней)</p>
                     <div class="flex flex-wrap gap-2">
                         <?php foreach (array_slice($menuPerformance['top'], 0, 5) as $t): ?>
                             <span class="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs"><?= e($t['name']) ?> ×<?= (int)$t['qty'] ?></span>
@@ -216,7 +246,7 @@ $chartValues = array_values($stats['orders_per_day']);
                     </div>
                     <?php endif; ?>
                     <?php if (!empty($menuPerformance['no_sales'])): ?>
-                    <p class="text-xs text-slate-500 mt-3 mb-1">No sales this period</p>
+                    <p class="text-xs text-slate-500 mt-3 mb-1">Без продаж за период</p>
                     <div class="flex flex-wrap gap-2">
                         <?php foreach (array_slice($menuPerformance['no_sales'], 0, 5) as $n): ?>
                             <span class="px-3 py-1 rounded-lg bg-slate-700/60 text-slate-400 text-xs"><?= e($n['name']) ?></span>
@@ -226,9 +256,9 @@ $chartValues = array_values($stats['orders_per_day']);
                 <?php else: ?>
                     <div class="empty-state-box">
                         <svg class="empty-state-icon mx-auto text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
-                        <div class="empty-state-title">No menu insights yet</div>
-                        <div class="empty-state-text">Add menu items and collect orders to see top sellers and recommendations.</div>
-                        <a href="/restaurant/menu_items.php" class="inline-block px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium btn-motion">Menu items</a>
+                        <div class="empty-state-title">Пока нет выводов по меню</div>
+                        <div class="empty-state-text">Добавьте позиции в меню и накопите заказы — здесь появятся лидеры продаж и подсказки.</div>
+                        <a href="/restaurant/menu_manage.php#dishes" class="inline-block px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium btn-motion">К меню</a>
                     </div>
                 <?php endif; ?>
             </div>
@@ -236,11 +266,11 @@ $chartValues = array_values($stats['orders_per_day']);
 
         <!-- Menu Opportunities -->
         <section class="space-y-6">
-            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Menu Opportunities</h3>
+            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Возможности по меню</h3>
             <div class="rounded-xl bg-gray-900/60 border border-gray-800 p-6 card-motion">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                        <h4 class="text-sm font-semibold text-emerald-400 uppercase mb-2">Top performers</h4>
+                        <h4 class="text-sm font-semibold text-emerald-400 uppercase mb-2">Сильные позиции</h4>
                         <?php if (!empty($menuOpportunities['promote'])): ?>
                         <ul class="space-y-1 text-sm text-slate-200">
                             <?php foreach (array_slice($menuOpportunities['promote'], 0, 5) as $p): ?>
@@ -254,11 +284,11 @@ $chartValues = array_values($stats['orders_per_day']);
                             <?php endforeach; ?>
                         </ul>
                         <?php else: ?>
-                        <p class="text-sm text-slate-500">No data yet.</p>
+                        <p class="text-sm text-slate-500">Пока нет данных.</p>
                         <?php endif; ?>
                     </div>
                     <div>
-                        <h4 class="text-sm font-semibold text-amber-400 uppercase mb-2">Underperformers</h4>
+                        <h4 class="text-sm font-semibold text-amber-400 uppercase mb-2">Слабые позиции</h4>
                         <?php
                         $underperformers = array_merge(
                             array_slice($menuWarnings['no_sales'] ?? [], 0, 3),
@@ -268,22 +298,22 @@ $chartValues = array_values($stats['orders_per_day']);
                         <?php if (!empty($underperformers)): ?>
                         <ul class="space-y-1 text-sm text-slate-300">
                             <?php foreach ($underperformers as $u): ?>
-                                <li><?= e($u['name'] ?? '') ?><?= isset($u['qty']) ? ' (qty: ' . (int)$u['qty'] . ')' : ' — no sales' ?></li>
+                                <li><?= e($u['name'] ?? '') ?><?= isset($u['qty']) ? ' (шт: ' . (int)$u['qty'] . ')' : ' — нет продаж' ?></li>
                             <?php endforeach; ?>
                         </ul>
                         <?php elseif (!empty($menuPerformance['no_sales']) || !empty($menuPerformance['low'])): ?>
                         <ul class="space-y-1 text-sm text-slate-300">
-                            <?php foreach (array_slice($menuPerformance['no_sales'] ?? [], 0, 3) as $n): ?><li><?= e($n['name']) ?> — no sales</li><?php endforeach; ?>
+                            <?php foreach (array_slice($menuPerformance['no_sales'] ?? [], 0, 3) as $n): ?><li><?= e($n['name']) ?> — нет продаж</li><?php endforeach; ?>
                             <?php foreach (array_slice($menuPerformance['low'] ?? [], 0, 3) as $l): ?><li><?= e($l['name']) ?> ×<?= (int)($l['qty'] ?? 0) ?></li><?php endforeach; ?>
                         </ul>
                         <?php else: ?>
-                        <p class="text-sm text-slate-500">No underperformers this period.</p>
+                        <p class="text-sm text-slate-500">За период нет явных аутсайдеров.</p>
                         <?php endif; ?>
                     </div>
                 </div>
                 <div class="mt-4 pt-4 border-t border-slate-700/60 grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                        <h4 class="text-sm font-semibold text-indigo-400 uppercase mb-2">Combo opportunities</h4>
+                        <h4 class="text-sm font-semibold text-indigo-400 uppercase mb-2">Комбо и сочетания</h4>
                         <?php if (!empty($menuOpportunities['consider_combo'])): ?>
                         <ul class="space-y-1 text-sm text-slate-200">
                             <?php foreach (array_slice($menuOpportunities['consider_combo'], 0, 5) as $c): ?>
@@ -291,21 +321,21 @@ $chartValues = array_values($stats['orders_per_day']);
                             <?php endforeach; ?>
                         </ul>
                         <?php else: ?>
-                        <p class="text-sm text-slate-500">Order more to see frequent pairings.</p>
+                        <p class="text-sm text-slate-500">Накопите заказы — появятся частые сочетания позиций.</p>
                         <?php endif; ?>
                     </div>
                     <div>
-                        <h4 class="text-sm font-semibold text-violet-400 uppercase mb-2">Upsell / pair suggestions</h4>
+                        <h4 class="text-sm font-semibold text-violet-400 uppercase mb-2">Допродажи и пары</h4>
                         <?php if (!empty($menuOpportunities['pair_with'])): ?>
                         <ul class="space-y-1 text-sm text-slate-200">
                             <?php foreach (array_slice($menuOpportunities['pair_with'], 0, 5) as $p): ?>
-                                <li>Pair <?= e($p['item_a_name']) ?> with <?= e($p['item_b_name']) ?></li>
+                                <li>Сочетайте «<?= e($p['item_a_name']) ?>» с «<?= e($p['item_b_name']) ?>»</li>
                             <?php endforeach; ?>
                         </ul>
                         <?php elseif (!empty($menuOpportunities['add_photo'])): ?>
-                        <p class="text-sm text-slate-300">Add photos: <?= implode(', ', array_map(function ($a) { return e($a['item_name']); }, array_slice($menuOpportunities['add_photo'], 0, 3))) ?>.</p>
+                        <p class="text-sm text-slate-300">Добавьте фото: <?= implode(', ', array_map(function ($a) { return e($a['item_name']); }, array_slice($menuOpportunities['add_photo'], 0, 3))) ?>.</p>
                         <?php else: ?>
-                        <p class="text-sm text-slate-500">Suggestions will appear from order patterns.</p>
+                        <p class="text-sm text-slate-500">Подсказки появятся по паттернам заказов.</p>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -314,7 +344,7 @@ $chartValues = array_values($stats['orders_per_day']);
 
         <!-- Peak hours -->
         <section class="space-y-6">
-            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Peak hours</h3>
+            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Пиковые часы</h3>
             <div class="rounded-xl bg-gray-900/60 border border-gray-800 p-6 card-motion">
                 <?php if ($peakHours['peak_hour_range_text'] !== ''): ?>
                     <p class="text-lg font-medium text-slate-100 mb-2"><?= e($peakHours['peak_hour_range_text']) ?></p>
@@ -324,10 +354,10 @@ $chartValues = array_values($stats['orders_per_day']);
                         <div class="flex-1 rounded-t bg-slate-700/80 hover:bg-emerald-500/60 transition-colors" style="height:<?= $hgt ?>%" title="<?= sprintf('%02d:00', $h) ?>: <?= $cnt ?>"></div>
                         <?php endfor; ?>
                     </div>
-                    <p class="text-xs text-slate-500 mt-2">Last 7 days · by hour</p>
+                    <p class="text-xs text-slate-500 mt-2">Последние 7 дней · по часам</p>
                 <?php else: ?>
                     <div class="empty-state-box py-6">
-                        <div class="text-sm text-slate-400">Add orders to see peak hours.</div>
+                        <div class="text-sm text-slate-400">Появятся заказы — здесь покажем часы пика.</div>
                     </div>
                 <?php endif; ?>
             </div>
@@ -335,30 +365,30 @@ $chartValues = array_values($stats['orders_per_day']);
 
         <!-- Menu attention (heatmap) -->
         <section class="space-y-6">
-            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Menu attention</h3>
+            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Внимание к позициям меню</h3>
             <div class="rounded-xl bg-gray-900/60 border border-gray-800 p-6 card-motion">
-                <p class="text-xs text-slate-500 mb-3">Most interacted / best performing menu items (from orders)</p>
+                <p class="text-xs text-slate-500 mb-3">Какие позиции чаще заказывают и на что обращают внимание</p>
                 <?php if ($menuHeatmap['has_data']): ?>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div><h4 class="text-xs font-semibold text-emerald-400 uppercase mb-2">Top</h4><ul class="space-y-1 text-sm text-slate-200"><?php foreach (array_slice($menuHeatmap['top'], 0, 5) as $t): ?><li><?= e($t['name']) ?> (<?= (int)$t['qty'] ?>)</li><?php endforeach; ?></ul></div>
-                        <div><h4 class="text-xs font-semibold text-amber-400 uppercase mb-2">Low</h4><ul class="space-y-1 text-sm text-slate-300"><?php foreach (array_slice($menuHeatmap['low'], 0, 3) as $l): ?><li><?= e($l['name']) ?> (<?= (int)$l['qty'] ?>)</li><?php endforeach; ?></ul></div>
-                        <div><h4 class="text-xs font-semibold text-slate-500 uppercase mb-2">No sales</h4><ul class="space-y-1 text-sm text-slate-500"><?php foreach (array_slice($menuHeatmap['no_sales'], 0, 3) as $n): ?><li><?= e($n['name']) ?></li><?php endforeach; ?></ul></div>
+                        <div><h4 class="text-xs font-semibold text-emerald-400 uppercase mb-2">Топ</h4><ul class="space-y-1 text-sm text-slate-200"><?php foreach (array_slice($menuHeatmap['top'], 0, 5) as $t): ?><li><?= e($t['name']) ?> (<?= (int)$t['qty'] ?>)</li><?php endforeach; ?></ul></div>
+                        <div><h4 class="text-xs font-semibold text-amber-400 uppercase mb-2">Низко</h4><ul class="space-y-1 text-sm text-slate-300"><?php foreach (array_slice($menuHeatmap['low'], 0, 3) as $l): ?><li><?= e($l['name']) ?> (<?= (int)$l['qty'] ?>)</li><?php endforeach; ?></ul></div>
+                        <div><h4 class="text-xs font-semibold text-slate-500 uppercase mb-2">Без продаж</h4><ul class="space-y-1 text-sm text-slate-500"><?php foreach (array_slice($menuHeatmap['no_sales'], 0, 3) as $n): ?><li><?= e($n['name']) ?></li><?php endforeach; ?></ul></div>
                     </div>
                 <?php else: ?>
-                    <p class="text-sm text-slate-500">No data yet. Orders will drive menu attention insights.</p>
+                    <p class="text-sm text-slate-500">Пока мало данных: как только появятся заказы, здесь сложится картина внимания к позициям.</p>
                 <?php endif; ?>
             </div>
         </section>
 
         <!-- Checkout conversion -->
         <section class="space-y-6">
-            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Checkout conversion</h3>
+            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Конверсия оформления</h3>
             <div class="rounded-xl bg-gray-900/60 border border-gray-800 p-6 card-motion">
                 <?php if ($checkoutConversion['started'] > 0 || $checkoutConversion['completed'] > 0): ?>
                     <div class="flex flex-wrap gap-6">
-                        <div><span class="text-slate-500 text-sm">Started checkout</span><div class="text-xl font-semibold text-slate-100"><?= (int)$checkoutConversion['started'] ?></div></div>
-                        <div><span class="text-slate-500 text-sm">Completed orders</span><div class="text-xl font-semibold text-emerald-400"><?= (int)$checkoutConversion['completed'] ?></div></div>
-                        <div><span class="text-slate-500 text-sm">Conversion</span><div class="text-xl font-semibold text-slate-100"><?= $checkoutConversion['conversion_pct'] !== null ? (float)$checkoutConversion['conversion_pct'] . '%' : '—' ?></div></div>
+                        <div><span class="text-slate-500 text-sm">Начали оформление</span><div class="text-xl font-semibold text-slate-100"><?= (int)$checkoutConversion['started'] ?></div></div>
+                        <div><span class="text-slate-500 text-sm">Завершили заказ</span><div class="text-xl font-semibold text-emerald-400"><?= (int)$checkoutConversion['completed'] ?></div></div>
+                        <div><span class="text-slate-500 text-sm">Конверсия</span><div class="text-xl font-semibold text-slate-100"><?= $checkoutConversion['conversion_pct'] !== null ? (float)$checkoutConversion['conversion_pct'] . '%' : '—' ?></div></div>
                     </div>
                     <p class="text-xs text-slate-500 mt-3"><?= e($checkoutConversion['recommendation_text']) ?></p>
                 <?php else: ?>
@@ -369,23 +399,23 @@ $chartValues = array_values($stats['orders_per_day']);
 
         <!-- Table turnover -->
         <section class="space-y-6">
-            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Table performance</h3>
+            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Столы: нагрузка</h3>
             <div class="rounded-xl bg-gray-900/60 border border-gray-800 p-6 card-motion">
                 <?php if ($tableTurnoverRev['has_data'] && !empty($tableTurnoverRev['tables'])): ?>
                     <p class="text-slate-200 font-medium"><?= e($tableTurnoverRev['busiest_table']) ?></p>
-                    <ul class="mt-2 space-y-1 text-sm text-slate-300"><?php foreach (array_slice($tableTurnoverRev['tables'], 0, 5) as $t): ?><li><?= e($t['name']) ?> — <?= (int)$t['orders_count'] ?> orders</li><?php endforeach; ?></ul>
+                    <ul class="mt-2 space-y-1 text-sm text-slate-300"><?php foreach (array_slice($tableTurnoverRev['tables'], 0, 5) as $t): ?><li><?= e($t['name']) ?> — <?= (int)$t['orders_count'] ?> заказов</li><?php endforeach; ?></ul>
                     <p class="text-xs text-slate-500 mt-2"><?= e($tableTurnoverRev['recommendation_text']) ?></p>
                 <?php else: ?>
-                    <p class="text-sm text-slate-500">Orders per table will appear once you have orders.</p>
+                    <p class="text-sm text-slate-500">Когда появятся заказы со столов, здесь покажем самые загруженные места.</p>
                 <?php endif; ?>
             </div>
         </section>
 
         <?php if ($benchmarkRev['available']): ?>
         <section class="space-y-6">
-            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Benchmark</h3>
+            <h3 class="text-xl font-semibold tracking-tight text-slate-100">Сравнение со схожими точками</h3>
             <div class="rounded-xl bg-gray-900/60 border border-gray-800 p-6 card-motion">
-                <div class="grid grid-cols-2 gap-4"><div><span class="text-slate-500 text-sm">Your average check</span><div class="text-lg font-semibold text-slate-100"><?= $benchmarkRev['your_aov'] !== null ? number_format($benchmarkRev['your_aov'], 0) . ' ₽' : '—' ?></div></div><div><span class="text-slate-500 text-sm">Restaurants like yours</span><div class="text-lg font-semibold text-emerald-400"><?= $benchmarkRev['peer_aov'] !== null ? number_format($benchmarkRev['peer_aov'], 0) . ' ₽' : '—' ?></div></div></div>
+                <div class="grid grid-cols-2 gap-4"><div><span class="text-slate-500 text-sm">Ваш средний чек</span><div class="text-lg font-semibold text-slate-100"><?= $benchmarkRev['your_aov'] !== null ? number_format($benchmarkRev['your_aov'], 0) . ' ₽' : '—' ?></div></div><div><span class="text-slate-500 text-sm">Схожие рестораны</span><div class="text-lg font-semibold text-emerald-400"><?= $benchmarkRev['peer_aov'] !== null ? number_format($benchmarkRev['peer_aov'], 0) . ' ₽' : '—' ?></div></div></div>
                 <?php if ($benchmarkRev['recommendation_text'] !== ''): ?><p class="text-xs text-slate-500 mt-2"><?= e($benchmarkRev['recommendation_text']) ?></p><?php endif; ?>
             </div>
         </section>

@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../app/bootstrap.php';
+require_once __DIR__ . '/../../app/order_payment_runtime.php';
+require_once __DIR__ . '/../../app/guest_order_loyalty_attach.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -22,7 +24,17 @@ if (!function_exists('require_login') || !function_exists('auth_user')) {
     exit;
 }
 
-require_login();
+if (!function_exists('require_waiter_access')) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'Ошибка загрузки авторизации'
+    ]);
+    exit;
+}
+
+require_waiter_access();
+global $currentRestaurant;
+$restaurantId = (int)($currentRestaurant['id'] ?? 0);
 
 $user = auth_user();
 if (!$user) {
@@ -33,7 +45,6 @@ if (!$user) {
     exit;
 }
 
-global $currentRestaurant;
 if (empty($currentRestaurant) || empty($currentRestaurant['id'])) {
     echo json_encode([
         'success' => false,
@@ -41,18 +52,6 @@ if (empty($currentRestaurant) || empty($currentRestaurant['id'])) {
     ]);
     exit;
 }
-
-$restaurantId = (int)$currentRestaurant['id'];
-
-if (!function_exists('require_restaurant_role')) {
-    echo json_encode([
-        'success' => false,
-        'message' => 'Ошибка проверки доступа'
-    ]);
-    exit;
-}
-
-require_restaurant_role($restaurantId, ['staff', 'admin', 'owner']);
 
 if (function_exists('is_demo_mode') && is_demo_mode()) {
     echo json_encode([
@@ -73,6 +72,7 @@ if (!$pdo instanceof PDO) {
 
 $orderId        = isset($_POST['order_id']) ? (int)$_POST['order_id'] : 0;
 $newOrderStatus = isset($_POST['order_status']) ? trim((string)$_POST['order_status']) : '';
+$newPaymentStatus = isset($_POST['payment_status']) ? trim((string)$_POST['payment_status']) : '';
 
 function normalize_order_status_for_db(string $status): string
 {
@@ -109,6 +109,22 @@ function can_transition_order_status(string $from, string $to): bool
     return in_array($to, $allowed[$from] ?? [], true);
 }
 
+function staff_orders_sync_loyalty_safe(PDO $pdo, array $restaurantRow, int $orderId): void
+{
+    if (!function_exists('guest_order_loyalty_sync')) {
+        return;
+    }
+
+    try {
+        $res = guest_order_loyalty_sync($pdo, $restaurantRow, $orderId, null);
+        if (!is_array($res) || empty($res['ok'])) {
+            error_log('staff/order_update_status loyalty_sync order_id=' . $orderId . ' error=' . (string)($res['error'] ?? 'unknown'));
+        }
+    } catch (Throwable $e) {
+        error_log('staff/order_update_status loyalty_sync order_id=' . $orderId . ' ' . $e->getMessage());
+    }
+}
+
 if ($orderId <= 0) {
     echo json_encode([
         'success' => false,
@@ -117,7 +133,7 @@ if ($orderId <= 0) {
     exit;
 }
 
-if ($newOrderStatus === '') {
+if ($newOrderStatus === '' && $newPaymentStatus === '') {
     echo json_encode([
         'success' => false,
         'message' => 'Нет данных для обновления'
@@ -144,6 +160,7 @@ try {
         $pdo->beginTransaction();
         $startedTx = true;
     }
+    order_expire_due_orders($pdo, $restaurantId, $orderId);
     $stmt = $pdo->prepare("
         SELECT id, restaurant_id, order_status, payment_status
         FROM orders
@@ -180,6 +197,14 @@ try {
             exit;
         }
         $currentOrderStatus = normalize_order_status_for_db((string)($order['order_status'] ?? ''));
+        if ($currentOrderStatus === 'canceled' && $newOrderStatus !== 'canceled') {
+            echo json_encode([
+                'success' => false,
+                'message' => 'Заказ уже отменён по таймауту'
+            ]);
+            if ($startedTx && $pdo->inTransaction()) $pdo->rollBack();
+            exit;
+        }
         if (!can_transition_order_status($currentOrderStatus, $newOrderStatus)) {
             echo json_encode([
                 'success' => false,
@@ -190,6 +215,26 @@ try {
         }
         $setParts[]              = 'order_status = :order_status';
         $params[':order_status'] = $newOrderStatus;
+    }
+
+    if ($newPaymentStatus !== '') {
+        $newPaymentStatus = normalize_payment_status_for_db($newPaymentStatus);
+        $allowedPaymentStatuses = ['pending', 'unpaid', 'paid', 'canceled'];
+        if (!in_array($newPaymentStatus, $allowedPaymentStatuses, true)) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'Недопустимый статус оплаты'
+            ]);
+            if ($startedTx && $pdo->inTransaction()) $pdo->rollBack();
+            exit;
+        }
+        $currentPaymentStatus = normalize_payment_status_for_db((string)($order['payment_status'] ?? ''));
+        if ($currentPaymentStatus === 'paid' && $newPaymentStatus === 'paid') {
+            // idempotent
+        } else {
+            $setParts[] = 'payment_status = :payment_status';
+            $params[':payment_status'] = $newPaymentStatus;
+        }
     }
 
     if (empty($setParts)) {
@@ -204,6 +249,19 @@ try {
     $sql = "UPDATE orders SET " . implode(', ', $setParts) . " WHERE id = :id AND restaurant_id = :rid";
     $upd = $pdo->prepare($sql);
     $upd->execute($params);
+
+    if ($newOrderStatus === 'delivered'
+        && function_exists('db_column_exists')
+        && db_column_exists('order_items', 'station_completed_at')) {
+        $updItems = $pdo->prepare("
+            UPDATE order_items
+            SET station_completed_at = COALESCE(station_completed_at, NOW())
+            WHERE order_id = :oid
+        ");
+        $updItems->execute([':oid' => $orderId]);
+    }
+
+    staff_orders_sync_loyalty_safe($pdo, $currentRestaurant, $orderId);
 
     if ($upd->rowCount() === 0) {
         if ($startedTx && $pdo->inTransaction()) $pdo->commit();
@@ -233,6 +291,9 @@ try {
         $msgParts = [];
         if ($newOrderStatus !== '') {
             $msgParts[] = 'order_status: ' . ($order['order_status'] ?? '') . ' → ' . $newOrderStatus;
+        }
+        if ($newPaymentStatus !== '') {
+            $msgParts[] = 'payment_status: ' . ($order['payment_status'] ?? '') . ' → ' . $newPaymentStatus;
         }
 
         add_log($pdo, [
@@ -269,5 +330,15 @@ try {
         'success' => false,
         'message' => 'Внутренняя ошибка при обновлении статуса. Попробуйте позже.'
     ]);
+    exit;
+} catch (Throwable $e) {
+    if (isset($startedTx) && $startedTx && $pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    error_log('staff/order_update_status unexpected error: ' . $e->getMessage());
+    echo json_encode([
+        'success' => false,
+        'message' => 'Внутренняя ошибка при обновлении статуса. Попробуйте позже.'
+    ], JSON_UNESCAPED_UNICODE);
     exit;
 }

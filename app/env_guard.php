@@ -43,6 +43,10 @@ if (!function_exists('env_guard_check')) {
             $errors[] = 'app_url_not_https';
         }
 
+        if (!empty($config['app']['otp_test_mode'])) {
+            $errors[] = 'otp_test_mode_enabled_in_production';
+        }
+
         $dbPass = (string)($config['db']['pass'] ?? '');
         $weakPasswords = ['', 'qrpass', 'change_me', 'password', 'test'];
         if (in_array($dbPass, $weakPasswords, true)) {
@@ -94,4 +98,3 @@ if (!function_exists('env_guard_check')) {
         exit;
     }
 }
-

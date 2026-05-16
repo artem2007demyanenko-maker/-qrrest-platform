@@ -79,16 +79,12 @@ $referralLink = $referralCode !== '' ? $signupUrl . '?ref=' . urlencode($referra
     <link rel="stylesheet" href="/assets/css/motion.css">
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-50 flex">
-<aside class="w-64 bg-slate-950/80 border-r border-slate-800 p-4 hidden md:block">
-    <?= brand_restaurant_sidebar_header_html($currentRestaurant['name']) ?>
-    <nav class="space-y-2 text-sm">
-        <a href="/restaurant/dashboard.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Обзор</a>
-        <a href="/restaurant/invite.php" class="block px-3 py-2 rounded-lg bg-slate-800/70">Пригласить ресторан</a>
-        <a href="/restaurant/revenue.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Доход</a>
-        <a href="/restaurant/settings.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Настройки</a>
-        <a href="/logout.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60 text-red-300">Выйти</a>
-    </nav>
-</aside>
+<?php
+$restaurantSidebarActive = 'invite';
+$restaurantSidebarName = (string)($currentRestaurant['name'] ?? 'Ресторан');
+require __DIR__ . '/_sidebar_mobile.php';
+?>
+<?php require __DIR__ . '/_sidebar.php'; ?>
 <main class="flex-1 p-4">
     <div class="max-w-xl mx-auto space-y-6">
         <header>

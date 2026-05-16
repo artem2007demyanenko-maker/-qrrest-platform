@@ -48,7 +48,14 @@ if (is_demo_mode() && empty($timeline['visits']) && $guestId > 0) {
 
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="min-h-screen bg-slate-950 text-slate-50">
+<body class="min-h-screen bg-slate-950 text-slate-50 flex">
+<?php
+$restaurantSidebarActive = 'guest_view';
+$restaurantSidebarName = (string)($currentRestaurant['name'] ?? 'Ресторан');
+require __DIR__ . '/_sidebar_mobile.php';
+?>
+<?php require __DIR__ . '/_sidebar.php'; ?>
+<main class="flex-1 p-4">
 <div class="max-w-2xl mx-auto p-4 space-y-6">
     <a href="/restaurant/crm.php" class="inline-block text-sm text-slate-400 hover:text-slate-200">← CRM</a>
     <h1 class="text-xl font-bold text-slate-100">Guest timeline</h1>
@@ -85,5 +92,6 @@ if (is_demo_mode() && empty($timeline['visits']) && $guestId > 0) {
         </div>
     <?php endif; ?>
 </div>
+</main>
 </body>
 </html>

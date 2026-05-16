@@ -1,0 +1,7 @@
+app/runtime_schema_bootstrap.php
+public_html/qr.php
+public_html/order_track.php
+public_html/staff/kitchen_api.php
+public_html/staff/orders_api.php
+public_html/staff/pos_create_order.php
+docker-compose.prod.yml

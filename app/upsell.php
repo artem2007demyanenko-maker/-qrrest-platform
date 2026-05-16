@@ -1,6 +1,9 @@
 <?php
 
 require_once __DIR__ . '/db.php';
+if (file_exists(__DIR__ . '/schema_guard.php')) {
+    require_once __DIR__ . '/schema_guard.php';
+}
 
 if (!function_exists('menu_upsell_rules_exists')) {
     function menu_upsell_rules_exists(): bool
@@ -39,14 +42,11 @@ function get_upsell_suggestions(int $restaurantId, int $itemId, int $limit = 3):
     $limit = (int)$limit;
 
     $enabledFilter = '';
-    if (file_exists(__DIR__ . '/schema_guard.php')) {
-        require_once __DIR__ . '/schema_guard.php';
-    }
     if (function_exists('db_column_exists') && db_column_exists('menu_upsell_rules', 'enabled')) {
         $enabledFilter = ' AND (r.enabled IS NULL OR r.enabled = 1)';
     }
     $sql = "
-        SELECT m.id, m.name, m.price, m.image_path, m.image_url, m.description
+        SELECT m.id, m.name, m.price, m.image_path, m.description
         FROM menu_upsell_rules r
         INNER JOIN menu_items m
             ON m.id = r.suggest_item_id
@@ -77,4 +77,3 @@ function get_upsell_suggestions(int $restaurantId, int $itemId, int $limit = 3):
     }
     return $out;
 }
-

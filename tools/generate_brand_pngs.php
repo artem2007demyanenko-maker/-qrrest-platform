@@ -1,6 +1,15 @@
 <?php
 /**
- * One-off: render brand mark to PNG (GD). Run: php tools/generate_brand_pngs.php
+ * Генерация растровых brand-иконок из кода (GD).
+ *
+ * Требования: PHP с расширением **ext-gd** (`php -m | grep -i gd`).
+ * Без GD скрипт завершится фатально при вызове imagecreatetruecolor — запускайте на машине разработчика или в контейнере с gd,
+ * либо коммитьте уже сгенерированные файлы в `public_html/` (см. `docs/BRAND_ASSETS.md`).
+ *
+ * Образ `php:8.2-apache` в Dockerfile по умолчанию **не** включает gd — генератор для прод-контейнера не зашит намеренно;
+ * деплой опирается на **закоммиченные** PNG/ICO в репозитории.
+ *
+ * Запуск: `php tools/generate_brand_pngs.php` из корня репозитория.
  */
 declare(strict_types=1);
 

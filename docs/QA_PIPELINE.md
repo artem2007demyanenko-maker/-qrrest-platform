@@ -31,13 +31,41 @@ set +a
 npm run smoke
 ```
 
+## Stable E2E Baseline
+
+The suite is designed to run against a real disposable tenant, not mocks. To create/update the minimal baseline data, run this on the target environment with secrets supplied from env:
+
+```bash
+export QRREST_E2E_PASSWORD='set-a-real-secret-outside-git'
+php tools/e2e_baseline.php --apply
+```
+
+The provisioner is idempotent and creates/updates only the dedicated E2E tenant rows:
+
+- Restaurant subdomain: `QRREST_E2E_RESTAURANT_SUBDOMAIN` (default `test`)
+- One table for QR hall ordering
+- One visible category and visible menu items for `kitchen`, `cold`, `bar`, and `dessert`
+- Dedicated owner, waiter, kitchen, bar, cold, and dessert accounts
+- One active KDS baseline order when `QRREST_E2E_BASELINE_KDS_ORDER=1`
+
+Passwords are never stored in the repository. Use `QRREST_E2E_PASSWORD` for all test accounts or per-role variables like `QRREST_BAR_PASSWORD`. After the provisioner finishes, copy the printed `QRREST_E2E_TABLE_ID` and account emails into `.env.playwright`.
+
 Required only for authenticated flows:
 
 - `QRREST_OWNER_EMAIL` / `QRREST_OWNER_PASSWORD`
 - `QRREST_WAITER_EMAIL` / `QRREST_WAITER_PASSWORD`
+- `QRREST_KITCHEN_EMAIL` / `QRREST_KITCHEN_PASSWORD`
 - `QRREST_COLD_EMAIL` / `QRREST_COLD_PASSWORD`
 - `QRREST_BAR_EMAIL` / `QRREST_BAR_PASSWORD`
 - `QRREST_DESSERT_EMAIL` / `QRREST_DESSERT_PASSWORD`
+
+For CI or pre-deploy gates, enable strict mode:
+
+```bash
+QRREST_E2E_STRICT=1 npm run smoke
+```
+
+Strict mode turns missing credentials/data/mutation flags into clear failures instead of silent skips.
 
 ## Pre-Deploy Checks
 

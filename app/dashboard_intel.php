@@ -114,12 +114,14 @@ if (!function_exists('dashboard_crm_summary')) {
             if (!function_exists('db') || !function_exists('db_table_exists') || !db_table_exists('crm_guests')) {
                 return null;
             }
+            if (!function_exists('get_retention_stats') && file_exists(__DIR__ . '/guest_retention.php')) {
+                require_once __DIR__ . '/guest_retention.php';
+            }
+            $retention = function_exists('get_retention_stats') ? get_retention_stats($restaurantId) : null;
+            $returning = (int)($retention['repeat_guests'] ?? 0);
+
             // Read path must be pure: do NOT process CRM outbox here.
             $pdo = db();
-            $stmt = $pdo->prepare("SELECT COUNT(*) FROM crm_guests WHERE restaurant_id = ? AND visits_count > 1");
-            $stmt->execute([$restaurantId]);
-            $returning = (int)$stmt->fetchColumn();
-
             $pending = 0;
             if (function_exists('db_table_exists') && db_table_exists('crm_outbox')) {
                 $stmt = $pdo->prepare("SELECT COUNT(*) FROM crm_outbox WHERE restaurant_id = ? AND status = 'pending'");

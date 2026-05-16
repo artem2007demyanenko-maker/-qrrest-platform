@@ -115,27 +115,34 @@ if (!function_exists('get_inactive_guests')) {
             $pdo = db();
 
             if (guest_retention_has_crm_source()) {
-                $sql = "
-                    SELECT
-                        phone AS guest_contact,
-                        last_seen_at AS last_visit,
-                        visits_count,
-                        NULL AS guest_name,
-                        DATEDIFF(NOW(), last_seen_at) AS inactivity_days
-                    FROM crm_guests
-                    WHERE restaurant_id = :rest
-                      AND consent = 1
-                      AND visits_count > 0
-                      AND (last_seen_at IS NULL OR last_seen_at < DATE_SUB(NOW(), INTERVAL :days DAY))
-                    ORDER BY COALESCE(last_seen_at, '1970-01-01 00:00:00') ASC
-                    LIMIT :limit
-                ";
-                $stmt = $pdo->prepare($sql);
-                $stmt->bindValue(':rest', $restaurant_id, PDO::PARAM_INT);
-                $stmt->bindValue(':days', $days, PDO::PARAM_INT);
-                $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-                $stmt->execute();
-                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                $rows = [];
+                foreach (crm_confirmed_guest_metrics_rows($restaurant_id) as $row) {
+                    if ((int)($row['consent'] ?? 0) !== 1) {
+                        continue;
+                    }
+                    $visits = (int)($row['visits_count'] ?? 0);
+                    $lastVisit = trim((string)($row['last_seen_at'] ?? ''));
+                    if ($visits <= 0) {
+                        continue;
+                    }
+                    $lastTs = $lastVisit !== '' ? strtotime($lastVisit) : false;
+                    if ($lastTs !== false && $lastTs >= strtotime('-' . $days . ' days')) {
+                        continue;
+                    }
+                    $rows[] = [
+                        'guest_contact' => (string)($row['phone'] ?? ''),
+                        'last_visit' => $lastVisit,
+                        'visits_count' => $visits,
+                        'guest_name' => null,
+                        'inactivity_days' => $lastTs === false ? 0 : max(0, (int)floor((time() - $lastTs) / 86400)),
+                    ];
+                }
+                usort($rows, static function (array $a, array $b): int {
+                    $aTs = !empty($a['last_visit']) ? strtotime((string)$a['last_visit']) : 0;
+                    $bTs = !empty($b['last_visit']) ? strtotime((string)$b['last_visit']) : 0;
+                    return $aTs <=> $bTs;
+                });
+                $rows = array_slice($rows, 0, $limit);
             } elseif (guest_retention_table_exists()) {
                 $sql = "
                     SELECT 
@@ -198,9 +205,10 @@ if (!function_exists('get_guest_visit_count')) {
         try {
             $pdo = db();
             if (guest_retention_has_crm_source()) {
-                $stmt = $pdo->prepare('SELECT visits_count FROM crm_guests WHERE restaurant_id = ? AND phone = ? LIMIT 1');
-                $stmt->execute([$restaurant_id, $guest_contact]);
-                return (int)($stmt->fetchColumn() ?: 0);
+                $row = function_exists('crm_confirmed_guest_metrics_row_by_phone')
+                    ? crm_confirmed_guest_metrics_row_by_phone($restaurant_id, $guest_contact)
+                    : null;
+                return (int)($row['visits_count'] ?? 0);
             }
             if (!guest_retention_table_exists()) {
                 return 0;
@@ -291,17 +299,15 @@ if (!function_exists('get_retention_stats')) {
             return $default;
         }
         try {
-            $pdo = db();
             if (guest_retention_has_crm_source()) {
-                $stmt = $pdo->prepare("
-                    SELECT visits_count, last_seen_at
-                    FROM crm_guests
-                    WHERE restaurant_id = ?
-                      AND visits_count > 0
-                ");
-                $stmt->execute([$restaurant_id]);
-                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                $rows = array_values(array_filter(
+                    crm_confirmed_guest_metrics_rows($restaurant_id),
+                    static function (array $row): bool {
+                        return (int)($row['visits_count'] ?? 0) > 0;
+                    }
+                ));
             } elseif (guest_retention_table_exists()) {
+                $pdo = db();
                 $stmt = $pdo->prepare("
                     SELECT 
                         guest_contact,
@@ -386,17 +392,15 @@ if (!function_exists('get_guest_segments_summary')) {
             return $default;
         }
         try {
-            $pdo = db();
             if (guest_retention_has_crm_source()) {
-                $stmt = $pdo->prepare("
-                    SELECT visits_count, last_seen_at
-                    FROM crm_guests
-                    WHERE restaurant_id = ?
-                      AND visits_count > 0
-                ");
-                $stmt->execute([$restaurant_id]);
-                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                $rows = array_values(array_filter(
+                    crm_confirmed_guest_metrics_rows($restaurant_id),
+                    static function (array $row): bool {
+                        return (int)($row['visits_count'] ?? 0) > 0;
+                    }
+                ));
             } elseif (guest_retention_table_exists()) {
+                $pdo = db();
                 $stmt = $pdo->prepare("
                     SELECT 
                         guest_contact,

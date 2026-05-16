@@ -21,8 +21,7 @@ require_once __DIR__ . '/../../app/schema_guard.php';
 
 require_login();
 
-$currentUser = function_exists('auth_user') ? auth_user() : null;
-if (!$currentUser || ($currentUser['global_role'] ?? null) !== 'project_owner') {
+if (!function_exists('is_project_owner') || !is_project_owner()) {
     http_response_code(403);
     header('Content-Type: text/html; charset=utf-8');
     echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1><p>Platform owner only.</p></body></html>';

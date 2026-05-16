@@ -1,9 +1,8 @@
 <?php
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-
 require_once __DIR__ . '/../../app/bootstrap.php';
+if (file_exists(__DIR__ . '/../../app/schema_guard.php')) {
+    require_once __DIR__ . '/../../app/schema_guard.php';
+}
 
 $pdo = db();
 
@@ -11,27 +10,30 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-function guest_e($v): string {
+function wallet_guest_e($v): string {
     return function_exists('e') ? e($v) : htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 }
 
-function guest_require_login(): int {
+function wallet_require_guest_login(): int {
     $gid = (int)($_SESSION['guest_id'] ?? 0);
     if ($gid <= 0) {
-        header("Location: /guest/login.php");
+        $redirect = function_exists('guest_auth_safe_redirect_path')
+            ? guest_auth_safe_redirect_path((string)($_SERVER['REQUEST_URI'] ?? '/guest/wallet.php'))
+            : '/guest/wallet.php';
+        header("Location: /guest/login.php?redirect=" . urlencode($redirect));
         exit;
     }
     return $gid;
 }
 
-function guest_get(PDO $pdo, int $gid): ?array {
+function wallet_guest_get(PDO $pdo, int $gid): ?array {
     $st = $pdo->prepare("SELECT id, phone, name FROM guests WHERE id = :id LIMIT 1");
     $st->execute([':id' => $gid]);
     $g = $st->fetch(PDO::FETCH_ASSOC);
     return $g ?: null;
 }
 
-function guest_loyalty_balance(PDO $pdo, int $restaurantId, string $phone, ?int $guestId = null): int {
+function wallet_guest_loyalty_balance(PDO $pdo, int $restaurantId, string $phone, ?int $guestId = null): int {
     // Single ledger: only guest_loyalty_accounts. No legacy reads.
     if ($guestId !== null && $guestId > 0 && function_exists('guest_loyalty_balance_by_guest_rest')) {
         return guest_loyalty_balance_by_guest_rest($pdo, $restaurantId, $guestId);
@@ -39,32 +41,59 @@ function guest_loyalty_balance(PDO $pdo, int $restaurantId, string $phone, ?int 
     return 0;
 }
 
-$guestId = guest_require_login();
-$guest = guest_get($pdo, $guestId);
+$guestId = wallet_require_guest_login();
+$guest = wallet_guest_get($pdo, $guestId);
 if (!$guest) {
     unset($_SESSION['guest_id']);
-    header("Location: /guest/login.php");
+    $redirect = function_exists('guest_auth_safe_redirect_path')
+        ? guest_auth_safe_redirect_path((string)($_SERVER['REQUEST_URI'] ?? '/guest/wallet.php'))
+        : '/guest/wallet.php';
+    header("Location: /guest/login.php?redirect=" . urlencode($redirect));
     exit;
 }
 
+$appConfig = require __DIR__ . '/../../app/config.php';
+$walletProtocol = (string)($appConfig['app']['protocol'] ?? 'https');
+$walletMainDomain = trim((string)($appConfig['app']['main_domain'] ?? ''));
 
-$stmt = $pdo->prepare("
-    SELECT
-      gc.id,
-      gc.restaurant_id,
-      gc.public_uid,
-      gc.token,
-      gc.status,
-      r.name as restaurant_name,
-      r.qr_theme as qr_theme
-    FROM guest_cards gc
-    JOIN restaurants r ON r.id = gc.restaurant_id
-    WHERE gc.guest_id = :gid
-      AND gc.status = 'active'
-    ORDER BY gc.id DESC
-");
-$stmt->execute([':gid' => $guestId]);
-$cards = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$uidSelect = (function_exists('guest_cards_uid_db_column') && guest_cards_uid_db_column() === 'public_uid')
+    ? 'gc.public_uid'
+    : 'gc.card_uid AS public_uid';
+$tokenSelect = (function_exists('db_column_exists') && db_column_exists('guest_cards', 'token'))
+    ? 'gc.token'
+    : 'NULL AS token';
+$statusSelect = (function_exists('db_column_exists') && db_column_exists('guest_cards', 'status'))
+    ? 'gc.status'
+    : "'active' AS status";
+$statusWhere = (function_exists('db_column_exists') && db_column_exists('guest_cards', 'status'))
+    ? "AND gc.status = 'active'"
+    : '';
+$cards = [];
+try {
+    $stmt = $pdo->prepare("
+        SELECT
+          gc.id,
+          gc.restaurant_id,
+          {$uidSelect},
+          {$tokenSelect},
+          {$statusSelect},
+          r.name as restaurant_name,
+          r.subdomain
+        FROM guest_cards gc
+        JOIN restaurants r ON r.id = gc.restaurant_id
+        WHERE gc.guest_id = :gid
+          {$statusWhere}
+        ORDER BY gc.id DESC
+    ");
+    $stmt->execute([':gid' => $guestId]);
+    $cards = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    if (function_exists('error_log')) {
+        error_log('guest/wallet cards list ' . $e->getMessage());
+    }
+    $cards = [];
+}
 
 
 // Soft loyalty gating: per-restaurant plan check so guest sees safe state when loyalty disabled.
@@ -79,13 +108,24 @@ foreach ($cards as $c) {
     if (function_exists('check_feature') && !check_feature($rid, 'loyalty_enabled')) {
         $planAllowsLoyalty = false;
     }
-    $bal = $planAllowsLoyalty ? guest_loyalty_balance($pdo, $rid, (string)$guest['phone'], $guestId) : 0;
+    $publicUid = (string)($c['public_uid'] ?? '');
+    $token = trim((string)($c['token'] ?? ''));
+    if ($token === '' && $publicUid !== '' && function_exists('guest_card_make_token')) {
+        $token = guest_card_make_token($publicUid);
+    }
+    $cabinetUrl = '';
+    $subdomain = trim((string)($c['subdomain'] ?? ''));
+    if ($subdomain !== '' && $walletMainDomain !== '') {
+        $cabinetUrl = $walletProtocol . '://' . $subdomain . '.' . $walletMainDomain . '/guest/cabinet.php';
+    }
+    $bal = $planAllowsLoyalty ? wallet_guest_loyalty_balance($pdo, $rid, (string)$guest['phone'], $guestId) : 0;
     $cardsUi[] = [
         'id' => (int)$c['id'],
         'restaurant_id' => $rid,
         'restaurant_name' => (string)$c['restaurant_name'],
-        'public_uid' => (string)$c['public_uid'],
-        'token' => (string)$c['token'],
+        'public_uid' => $publicUid,
+        'token' => $token,
+        'cabinet_url' => $cabinetUrl,
         'balance' => (int)$bal,
         'loyalty_unavailable' => !$planAllowsLoyalty,
     ];
@@ -97,7 +137,7 @@ $cardsUiJson = json_encode($cardsUi, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLA
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>Wallet</title>
+  <title>Кошелёк карт</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -155,11 +195,14 @@ $cardsUiJson = json_encode($cardsUi, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLA
       <div>
         <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full glass text-[11px] text-slate-300">
           <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          Wallet
+          Wallet hub
         </div>
-        <h1 class="mt-3 text-3xl font-semibold tracking-tight">Карты лояльности</h1>
+        <h1 class="mt-3 text-3xl font-semibold tracking-tight">Кошелёк карт</h1>
         <div class="mt-1 text-sm text-slate-400">
-          <?= guest_e($guest['name'] ?: 'Гость') ?> · <?= guest_e($guest['phone']) ?>
+          <?= wallet_guest_e($guest['name'] ?: 'Гость') ?> · <?= wallet_guest_e($guest['phone']) ?>
+        </div>
+        <div class="mt-2 text-sm text-slate-500 max-w-xl">
+          Здесь собраны все ваши карты по ресторанам. Баланс, операции и история заказов живут в кабинете конкретного ресторана.
         </div>
       </div>
 
@@ -175,13 +218,20 @@ $cardsUiJson = json_encode($cardsUi, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLA
       <div class="rounded-3xl glass p-5">
         <div class="text-lg font-semibold">Пока нет ни одной карты</div>
         <div class="text-sm text-slate-400 mt-1">
-          Попросите официанта оформить карту на ваш номер телефона — и она появится здесь.
+          Первая карта появится после первого успешного заказа в ресторане или когда персонал оформит её на ваш номер.
         </div>
         <div class="mt-4 rounded-2xl bg-slate-950/70 border border-slate-800 p-4 text-[11px] text-slate-400">
-          Подсказка: номер телефона должен совпадать с тем, который вы указали при входе.
+          Подсказка: номер телефона должен совпадать с тем, который вы указали при входе. После выпуска карта появится в этом кошельке автоматически.
         </div>
       </div>
     <?php else: ?>
+
+      <div class="rounded-3xl glass p-4">
+        <div class="text-sm font-semibold">Все карты в одном месте</div>
+        <div class="mt-1 text-sm text-slate-400">
+          Выберите ресторан и откройте его кабинет, чтобы посмотреть баланс, операции и историю заказов именно по этой программе.
+        </div>
+      </div>
 
 
       <div class="rounded-3xl glass p-4">
@@ -203,7 +253,7 @@ $cardsUiJson = json_encode($cardsUi, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLA
       <div class="rounded-3xl glass p-4">
         <div class="text-sm font-semibold mb-1">Как это работает</div>
         <div class="text-sm text-slate-400">
-          Покажите QR официанту. Он может начислить или списать бонусы именно в этом ресторане.
+          Кошелёк хранит ваши карты по ресторанам. Для баланса, операций и истории заказов открывайте кабинет нужного ресторана.
         </div>
       </div>
 
@@ -279,10 +329,19 @@ $cardsUiJson = json_encode($cardsUi, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLA
                   </div>
                 </div>
 
-                <a href="/guest/apple_wallet.php?card_id=${c.id}"
-                   class="inline-flex items-center justify-center w-full px-4 py-3 rounded-2xl bg-black text-white text-sm font-semibold hover:opacity-90">
-                  Добавить в Apple Wallet
-                </a>
+                ${c.cabinet_url
+                  ? `<a href="${escapeHtml(c.cabinet_url)}"
+                      class="inline-flex items-center justify-center w-full px-4 py-3 rounded-2xl bg-emerald-500 text-slate-950 text-sm font-semibold hover:bg-emerald-400">
+                      Кабинет ресторана
+                    </a>`
+                  : `<div class="inline-flex items-center justify-center w-full px-4 py-3 rounded-2xl bg-slate-900/80 border border-slate-800 text-sm text-slate-300">
+                      Кабинет доступен в меню ресторана
+                    </div>`
+                }
+
+                <div class="inline-flex items-center justify-center w-full px-4 py-3 rounded-2xl bg-slate-900/50 border border-slate-800 text-xs text-slate-400">
+                  Apple Wallet скоро
+                </div>
 
                 <button type="button"
                         data-token="${escapeHtml(c.token)}"

@@ -68,7 +68,12 @@ foreach ($plans as $p) {
 if (!$activePlan && $plans) $activePlan = $plans[0];
 
 // таблица столов
-$stmt = $pdo->prepare("SELECT id, name FROM tables WHERE restaurant_id=:r ORDER BY id ASC");
+$stmt = $pdo->prepare("
+    SELECT t.id, t.name FROM tables AS t
+    WHERE t.restaurant_id=:r
+    " . qr_public_sql_exclude_delivery($pdo, 't') . "
+    ORDER BY t.id ASC
+");
 $stmt->execute([':r' => $restId]);
 $tables = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -76,19 +81,38 @@ $tables = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $activeByTable = [];
 try {
     $q = $pdo->prepare("
-        SELECT table_id,
-               SUM(CASE WHEN order_status IN ('new','in_progress') THEN 1 ELSE 0 END) AS active_cnt,
-               MAX(CASE WHEN order_status IN ('new','in_progress') THEN order_status ELSE NULL END) AS active_status
-        FROM orders
-        WHERE restaurant_id = :r
-        GROUP BY table_id
+        SELECT o.table_id,
+               SUM(CASE WHEN o.order_status IN ('new','accepted','cooking','ready','in_progress') THEN 1 ELSE 0 END) AS active_cnt,
+               MAX(
+                   CASE
+                       WHEN o.order_status = 'ready' THEN 3
+                       WHEN o.order_status IN ('accepted','cooking','in_progress') THEN 2
+                       WHEN o.order_status = 'new' THEN 1
+                       ELSE 0
+                   END
+               ) AS active_stage
+        FROM orders o
+        INNER JOIN tables t ON t.id = o.table_id AND t.restaurant_id = o.restaurant_id
+        WHERE o.restaurant_id = :r
+        " . qr_public_sql_exclude_delivery($pdo, 't') . "
+        GROUP BY o.table_id
     ");
     $q->execute([':r' => $restId]);
     foreach ($q->fetchAll(PDO::FETCH_ASSOC) as $row) {
         $tid = (int)$row['table_id'];
+        $stage = (int)($row['active_stage'] ?? 0);
+        $status = null;
+        if ($stage >= 3) {
+            $status = 'ready';
+        } elseif ($stage === 2) {
+            $status = 'cooking';
+        } elseif ($stage === 1) {
+            $status = 'new';
+        }
         $activeByTable[$tid] = [
             'active_cnt' => (int)($row['active_cnt'] ?? 0),
-            'active_status' => $row['active_status'] ?? null,
+            'active_stage' => $stage,
+            'active_status' => $status,
         ];
     }
 } catch (Throwable $e) {
@@ -216,6 +240,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$errors) {
 
             $decoded = fp_decode_layout($layoutJson);
+            $allowedIds = [];
+            foreach ($tables as $t) {
+                $tid = (int)($t['id'] ?? 0);
+                if ($tid > 0) {
+                    $allowedIds[$tid] = true;
+                }
+            }
+            $items = isset($decoded['items']) && is_array($decoded['items']) ? $decoded['items'] : [];
+            $filtered = [];
+            foreach ($items as $it) {
+                if (!is_array($it)) {
+                    continue;
+                }
+                $tid = (int)($it['table_id'] ?? 0);
+                if ($tid > 0 && isset($allowedIds[$tid])) {
+                    $filtered[] = $it;
+                }
+            }
+            $decoded['items'] = $filtered;
+
             $layoutJson = json_encode($decoded, JSON_UNESCAPED_UNICODE);
 
             try {
@@ -240,6 +284,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $activePlanId = $activePlan ? (int)$activePlan['id'] : 0;
 $activeLayout = fp_decode_layout($activePlan['layout_json'] ?? null);
+
+$allowedTableIdsView = [];
+foreach ($tables as $t) {
+    $tid = (int)($t['id'] ?? 0);
+    if ($tid > 0) {
+        $allowedTableIdsView[$tid] = true;
+    }
+}
+if (!empty($activeLayout['items']) && is_array($activeLayout['items'])) {
+    $activeLayout['items'] = array_values(array_filter($activeLayout['items'], static function ($it) use ($allowedTableIdsView) {
+        if (!is_array($it)) {
+            return false;
+        }
+        $tid = (int)($it['table_id'] ?? 0);
+        return $tid > 0 && isset($allowedTableIdsView[$tid]);
+    }));
+}
 
 // быстрые словари
 $tableNameById = [];
@@ -283,8 +344,20 @@ foreach ($tables as $t) $tableNameById[(int)$t['id']] = (string)$t['name'];
         .badge-dot { width: 6px; height: 6px; border-radius: 999px; display:inline-block; }
     </style>
 </head>
-<body class="min-h-screen bg-gradient-to-br from-slate-950 via-slate-950 to-slate-900 text-slate-50">
+<body class="min-h-screen bg-gradient-to-br from-slate-950 via-slate-950 to-slate-900 text-slate-50 flex flex-col md:flex-row">
+<?php
+$restaurantSidebarActive = 'floorplan';
+$restaurantSidebarName = (string)($currentRestaurant['name'] ?? 'Ресторан');
+require __DIR__ . '/_sidebar_mobile.php';
+require __DIR__ . '/_sidebar.php';
+?>
+<div class="flex-1 min-w-0">
 <div class="max-w-7xl mx-auto px-4 py-4">
+    <?php
+    $operationalNavActive = 'floorplan';
+    require __DIR__ . '/_restaurant_cabinet_context.php';
+    require __DIR__ . '/_restaurant_operational_nav.php';
+    ?>
 
     <!-- header -->
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
@@ -292,7 +365,7 @@ foreach ($tables as $t) $tableNameById[(int)$t['id']] = (string)$t['name'];
             <div class="mb-3"><?= brand_header_cluster_html(false, 'w-8 h-8 text-slate-400') ?></div>
             <h1 class="text-2xl font-bold tracking-tight">План зала</h1>
             <div class="text-xs text-slate-500 mt-1">
-                <?= e($currentRestaurant['name']) ?> · настройка расположения столов
+                Настройка расположения столов и синхронизация со staff-картой
             </div>
         </div>
         <div class="flex items-center gap-2">
@@ -413,7 +486,8 @@ foreach ($tables as $t) $tableNameById[(int)$t['id']] = (string)$t['name'];
                         $dot = 'bg-slate-500';
                         $txt = 'Нет активных';
                         if ($cnt > 0) {
-                            if ($st === 'in_progress') { $dot = 'bg-sky-400'; $txt = 'Готовится'; }
+                            if ($st === 'ready') { $dot = 'bg-emerald-400'; $txt = 'Готово'; }
+                            elseif ($st === 'cooking') { $dot = 'bg-sky-400'; $txt = 'Готовится'; }
                             else { $dot = 'bg-amber-400'; $txt = 'Новый'; }
                         }
                         ?>
@@ -503,6 +577,9 @@ foreach ($tables as $t) $tableNameById[(int)$t['id']] = (string)$t['name'];
                         <span class="badge-dot bg-sky-400"></span> готовится
                     </span>
                     <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-900 border border-slate-800">
+                        <span class="badge-dot bg-emerald-400"></span> готово
+                    </span>
+                    <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-900 border border-slate-800">
                         <span class="badge-dot bg-slate-500"></span> нет активных
                     </span>
                     <span class="ml-auto text-[11px] text-slate-600">
@@ -512,6 +589,7 @@ foreach ($tables as $t) $tableNameById[(int)$t['id']] = (string)$t['name'];
             </div>
         </main>
     </div>
+</div>
 </div>
 
 <script>
@@ -546,7 +624,8 @@ foreach ($tables as $t) $tableNameById[(int)$t['id']] = (string)$t['name'];
         const cnt = Number(s.active_cnt || 0);
         const st = s.active_status;
         if (cnt > 0) {
-            if (st === 'in_progress') return {dot:'bg-sky-400', ring:'ring-sky-400/35', label:'Готовится'};
+            if (st === 'ready') return {dot:'bg-emerald-400', ring:'ring-emerald-400/35', label:'Готово'};
+            if (st === 'cooking') return {dot:'bg-sky-400', ring:'ring-sky-400/35', label:'Готовится'};
             return {dot:'bg-amber-400', ring:'ring-amber-400/35', label:'Новый'};
         }
         return {dot:'bg-slate-500', ring:'ring-slate-500/25', label:'Нет активных'};

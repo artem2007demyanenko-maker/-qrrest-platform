@@ -5,6 +5,8 @@
  */
 
 header('Content-Type: application/json; charset=utf-8');
+header('X-Robots-Tag: noindex, nofollow, noarchive');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
 $out = [
     'status' => 'ok',

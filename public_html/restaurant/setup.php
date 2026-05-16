@@ -145,6 +145,7 @@ if (file_exists(__DIR__ . '/../../app/onboarding_progress.php')) {
 <?php
 $restaurantSidebarActive = 'setup';
 $restaurantSidebarName = (string)($currentRestaurant['name'] ?? 'Ресторан');
+require __DIR__ . '/_sidebar_mobile.php';
 require __DIR__ . '/_sidebar.php';
 ?>
 
@@ -214,7 +215,7 @@ require __DIR__ . '/_sidebar.php';
             <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Step 2</div>
             <h3 class="text-lg font-semibold text-[#F3F4F6] mb-2">Add your first dishes</h3>
             <p class="text-sm text-gray-400 mb-4">Create at least 3 menu items so guests can order. Add categories first if you like.</p>
-            <a href="/restaurant/menu_items.php" class="inline-flex items-center px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium">Add menu items</a>
+            <a href="/restaurant/menu_manage.php#dish-form" class="inline-flex items-center px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium">Add menu items</a>
         </section>
 
         <!-- Step 3: Create tables -->

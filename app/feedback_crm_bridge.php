@@ -20,6 +20,9 @@ if (file_exists(__DIR__ . '/loyalty_return_mode.php')) {
 if (file_exists(__DIR__ . '/flow_id.php')) {
     require_once __DIR__ . '/flow_id.php';
 }
+if (file_exists(__DIR__ . '/crm_repo.php')) {
+    require_once __DIR__ . '/crm_repo.php';
+}
 
 if (!function_exists('feedback_crm_bridge_select_guest_phone_sql')) {
     function feedback_crm_bridge_select_guest_phone_sql(): string
@@ -247,6 +250,9 @@ if (!function_exists('get_feedback_based_suggestions')) {
             $orderGuestSql = (function_exists('db_column_exists') && db_column_exists('orders', 'guest_id'))
                 ? 'o.guest_id AS order_guest_id'
                 : 'NULL AS order_guest_id';
+            $orderCrmGuestSql = (function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id'))
+                ? 'o.crm_guest_id AS order_crm_guest_id'
+                : 'NULL AS order_crm_guest_id';
             $stmt = $pdo->prepare("
                 SELECT
                     f.id AS feedback_id,
@@ -255,6 +261,7 @@ if (!function_exists('get_feedback_based_suggestions')) {
                     f.comment,
                     f.created_at,
                     {$orderGuestSql},
+                    {$orderCrmGuestSql},
                     {$guestContactSql}
                 FROM order_feedback f
                 INNER JOIN orders o
@@ -285,6 +292,7 @@ if (!function_exists('get_feedback_based_suggestions')) {
                     $commentPreview .= '...';
                 }
                 $orderGuestId = isset($row['order_guest_id']) ? (int)$row['order_guest_id'] : 0;
+                $orderCrmGuestId = isset($row['order_crm_guest_id']) ? (int)$row['order_crm_guest_id'] : 0;
                 $guestCtx = function_exists('loyalty_feedback_resolve_guest_context')
                     ? loyalty_feedback_resolve_guest_context($pdo, $restaurantId, $orderId, $orderGuestId > 0 ? $orderGuestId : null)
                     : ['guest_id' => 0, 'has_guest' => false, 'has_loyalty_account' => false];
@@ -424,6 +432,8 @@ if (!function_exists('get_feedback_based_suggestions')) {
                     'rating' => $rating,
                     'comment_preview' => $commentPreview,
                     'guest_id' => (int)($guestCtx['guest_id'] ?? 0),
+                    'loyalty_guest_id' => (int)($guestCtx['guest_id'] ?? 0),
+                    'crm_guest_id' => $orderCrmGuestId,
                     'base_item_ids' => array_values(array_unique(array_map('intval', $baseItemIds))),
                     'suggested_item_ids' => $suggestedItemIds,
                     'reason' => $reason,
@@ -748,9 +758,13 @@ if (!function_exists('feedback_crm_bridge_accept_suggestion')) {
             if (in_array($type, $upsellTypes, true)) {
                 $createdDraft = false;
 
-                $guestId = (int)($payload['guest_id'] ?? 0);
+                $loyaltyGuestId = (int)($payload['loyalty_guest_id'] ?? ($payload['guest_id'] ?? 0));
+                $crmGuestId = (int)($payload['crm_guest_id'] ?? 0);
                 $orderId = (int)($payload['order_id'] ?? 0);
                 $reason = (string)($payload['reason'] ?? '');
+                $retentionSegment = function_exists('retention_normalize_segment')
+                    ? (retention_normalize_segment($payload['retention_segment'] ?? null) ?? (function_exists('retention_segment_from_reason') ? retention_segment_from_reason($reason) : null) ?? 'neutral')
+                    : 'neutral';
                 $returnWindowDays = (int)($payload['return_window_days'] ?? 0);
                 if ($returnWindowDays <= 0) {
                     $returnWindowDays = feedback_upsell_bridge_default_return_window_days($type);
@@ -787,10 +801,20 @@ if (!function_exists('feedback_crm_bridge_accept_suggestion')) {
                     }
                 }
 
+                if ($crmGuestId <= 0 && $orderId > 0 && function_exists('crm_order_lookup')) {
+                    $crmOrder = crm_order_lookup($restaurantId, $orderId);
+                    if (is_array($crmOrder)) {
+                        $crmGuestId = (int)($crmOrder['crm_guest_id'] ?? 0);
+                        if ($loyaltyGuestId <= 0) {
+                            $loyaltyGuestId = (int)($crmOrder['loyalty_guest_id'] ?? 0);
+                        }
+                    }
+                }
+
                 $firstId = (int)($suggestedItemIds[0] ?? 0);
                 $firstName = $firstId > 0 && !empty($menuItemNames[$firstId]) ? $menuItemNames[$firstId] : '';
                 $incent = function_exists('feedback_upsell_bridge_build_incentive_text')
-                    ? feedback_upsell_bridge_build_incentive_text($pdo, $restaurantId, $type, $orderId, $guestId, ($type === 'feedback_recovery_upsell' ? (int)($payload['rating'] ?? 0) : null))
+                    ? feedback_upsell_bridge_build_incentive_text($pdo, $restaurantId, $type, $orderId, $loyaltyGuestId, ($type === 'feedback_recovery_upsell' ? (int)($payload['rating'] ?? 0) : null))
                     : ['incentive_text' => null, 'recommended_bonus_points' => null];
                 $incentiveText = $incent['incentive_text'] ?? null;
                 $recommendedBonusPoints = isset($incent['recommended_bonus_points']) ? (int)$incent['recommended_bonus_points'] : null;
@@ -817,7 +841,9 @@ if (!function_exists('feedback_crm_bridge_accept_suggestion')) {
                 }
 
                 $draftPayload = [
-                    'guest_id' => $guestId,
+                    'guest_id' => $crmGuestId > 0 ? $crmGuestId : 0,
+                    'crm_guest_id' => $crmGuestId > 0 ? $crmGuestId : 0,
+                    'loyalty_guest_id' => $loyaltyGuestId > 0 ? $loyaltyGuestId : 0,
                     'order_id' => $orderId,
                     'reason' => $reason,
                     'retention_segment' => $retentionSegment,
@@ -977,4 +1003,3 @@ if (!function_exists('feedback_crm_bridge_accept_suggestion')) {
         }
     }
 }
-

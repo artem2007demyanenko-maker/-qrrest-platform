@@ -38,6 +38,10 @@ $allowedEvents = [
     'shown',
     'add_click',
     'accepted_in_order',
+    'popup_shown',
+    'popup_add_click',
+    'popup_dismiss',
+    'popup_continue_to_cart',
     // Extended events (conversion-based scoring / self-learning).
     'upsell_shown',
     'upsell_clicked',
@@ -57,7 +61,9 @@ if ($tableId === null || $tableId <= 0) {
 }
 
 $pdo = db();
-$stmt = $pdo->prepare("SELECT id FROM tables WHERE id = ? AND restaurant_id = ? LIMIT 1");
+$stmt = $pdo->prepare(
+    'SELECT id FROM tables WHERE id = ? AND restaurant_id = ? LIMIT 1'
+);
 $stmt->execute([$tableId, (int)$currentRestaurant['id']]);
 if (!$stmt->fetchColumn()) {
     echo json_encode(['success' => false, 'error' => 'table_not_found']);

@@ -37,14 +37,26 @@ function get_guest_timeline(int $restaurantId, int $guestId = 0, ?string $phone 
             $guest = $stmt->fetch(PDO::FETCH_ASSOC);
             if ($guest) {
                 $guestId = (int) $guest['id'];
-                $result['guest'] = ['id' => $guestId, 'phone' => $guest['phone'], 'visits_count' => (int) ($guest['visits_count'] ?? 0), 'last_seen_at' => $guest['last_seen_at'] ?? null];
+                $guestMetrics = function_exists('crm_confirmed_guest_metrics_row') ? crm_confirmed_guest_metrics_row($restaurantId, $guestId) : null;
+                $result['guest'] = [
+                    'id' => $guestId,
+                    'phone' => $guest['phone'],
+                    'visits_count' => (int) (($guestMetrics['visits_count'] ?? $guest['visits_count']) ?? 0),
+                    'last_seen_at' => $guestMetrics['last_seen_at'] ?? ($guest['last_seen_at'] ?? null),
+                ];
             }
         } elseif ($guestId > 0) {
             $stmt = $pdo->prepare("SELECT id, phone, visits_count, last_seen_at FROM crm_guests WHERE restaurant_id = ? AND id = ? LIMIT 1");
             $stmt->execute([$restaurantId, $guestId]);
             $guest = $stmt->fetch(PDO::FETCH_ASSOC);
             if ($guest) {
-                $result['guest'] = ['id' => (int) $guest['id'], 'phone' => $guest['phone'], 'visits_count' => (int) ($guest['visits_count'] ?? 0), 'last_seen_at' => $guest['last_seen_at'] ?? null];
+                $guestMetrics = function_exists('crm_confirmed_guest_metrics_row') ? crm_confirmed_guest_metrics_row($restaurantId, (int)$guest['id']) : null;
+                $result['guest'] = [
+                    'id' => (int) $guest['id'],
+                    'phone' => $guest['phone'],
+                    'visits_count' => (int) (($guestMetrics['visits_count'] ?? $guest['visits_count']) ?? 0),
+                    'last_seen_at' => $guestMetrics['last_seen_at'] ?? ($guest['last_seen_at'] ?? null),
+                ];
             }
         }
         if ($guestId <= 0) {

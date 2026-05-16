@@ -5,11 +5,40 @@
 (function () {
   'use strict';
 
+  if (window.__qrrestMotionInitialized) {
+    return;
+  }
+  window.__qrrestMotionInitialized = true;
+
   /* ---- Scroll reveal: add .visible when element enters viewport ---- */
-  var revealSelectors = '.hero, .feature-card, .dashboard-card, .section, .reveal, .fade-in';
+  var revealSelectors = '.hero, .feature-card, .dashboard-card, .section, .reveal, .fade-in, .card-motion, .feature-card-hover, .product-frame';
+
+  function ensureAppLoadedState() {
+    if (!document.body) return;
+    if (document.body.classList.contains('preloader-active')) {
+      window.addEventListener('qr:preloader-complete', function () {
+        document.body.classList.add('app-loaded');
+      }, { once: true });
+      return;
+    }
+    document.body.classList.add('app-loaded');
+  }
+
   function initReveal() {
-    var els = document.querySelectorAll(revealSelectors);
+    document.querySelectorAll(revealSelectors).forEach(function (el) {
+      if (!el.classList.contains('fade-in')) {
+        el.classList.add('fade-in');
+      }
+    });
+
+    var els = document.querySelectorAll('.fade-in');
     if (!els.length) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      els.forEach(function (el) {
+        el.classList.add('visible');
+      });
+      return;
+    }
     var observer = new IntersectionObserver(
       function (entries) {
         entries.forEach(function (entry) {
@@ -81,6 +110,7 @@
   }
 
   function init() {
+    ensureAppLoadedState();
     initReveal();
     initCounters();
     initRipple();

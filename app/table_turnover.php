@@ -1,4 +1,7 @@
 <?php
+if (!function_exists('qr_public_sql_exclude_delivery') && file_exists(__DIR__ . '/qr_public_menu.php')) {
+    require_once __DIR__ . '/qr_public_menu.php';
+}
 /**
  * Table turnover / performance: orders and revenue per table (proxy when no seated duration).
  */
@@ -34,6 +37,7 @@ function get_table_turnover(int $restaurantId, int $days = 7): array
             LEFT JOIN orders o ON o.table_id = t.id AND o.restaurant_id = t.restaurant_id
                 AND o.created_at >= :since AND o.order_status <> 'canceled'
             WHERE t.restaurant_id = :rid
+            " . qr_public_sql_exclude_delivery($pdo, 't') . "
             GROUP BY t.id, t.name
             ORDER BY orders_count DESC, revenue DESC
         ");

@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../../app/bootstrap.php';
+require_once __DIR__ . '/../../app/guest_loyalty.php';
 
 require_login();
 require_current_restaurant();
@@ -95,6 +96,32 @@ function badge_payment_type_class(string $type): string {
     return 'bg-slate-800 text-slate-100 border-slate-700';
 }
 
+function manager_loyalty_manual_marker(array $ctx): array {
+    $txCount = (int)($ctx['manual_tx_count'] ?? 0);
+    $accrualCount = (int)($ctx['manual_accrual_count'] ?? 0);
+    $spendCount = (int)($ctx['manual_spend_count'] ?? 0);
+
+    if ($txCount <= 0) {
+        return ['label' => '', 'class' => ''];
+    }
+    if ($txCount > 1 || ($accrualCount > 0 && $spendCount > 0)) {
+        return [
+            'label' => $txCount . ' ручн. операции',
+            'class' => 'bg-slate-800/80 border-slate-600 text-slate-100',
+        ];
+    }
+    if ($accrualCount > 0) {
+        return [
+            'label' => 'Ручное начисление',
+            'class' => 'bg-emerald-500/10 border-emerald-500/60 text-emerald-100',
+        ];
+    }
+    return [
+        'label' => 'Ручное списание',
+        'class' => 'bg-amber-500/10 border-amber-500/60 text-amber-100',
+    ];
+}
+
 
 if ($export === 'csv') {
     $stmt = $pdo->prepare($sql);
@@ -123,10 +150,13 @@ if ($export === 'csv') {
     ], ';');
 
     foreach ($orders as $o) {
+        $tblCsv = function_exists('qr_public_owner_order_table_label')
+            ? qr_public_owner_order_table_label((string)($o['table_name'] ?? ''))
+            : (string)($o['table_name'] ?? '');
         fputcsv($out, [
             $o['id'],
             $o['created_at'],
-            $o['table_name'] ?? '',
+            $tblCsv,
             (float)$o['total_price'],
             human_payment_type($o['payment_type'] ?? ''),
             human_payment_status($o['payment_status'] ?? ''),
@@ -141,6 +171,9 @@ if ($export === 'csv') {
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$loyaltyContextByOrder = function_exists('guest_loyalty_order_context_map')
+    ? guest_loyalty_order_context_map($pdo, $restaurantId, $orders)
+    : [];
 
 $totalOrders       = count($orders);
 $totalPaidAmount   = 0.0;
@@ -179,6 +212,20 @@ $exportUrl = '?' . http_build_query($exportParams);
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-50">
+<?php
+$restaurantSidebarActive = 'transactions';
+$restaurantSidebarName = (string)($currentRestaurant['name'] ?? 'Ресторан');
+require __DIR__ . '/_sidebar_mobile.php';
+?>
+
+<aside class="hidden md:block fixed left-0 top-0 bottom-0 w-64 bg-slate-950/85 border-r border-slate-800 p-4">
+    <?= brand_restaurant_sidebar_header_html($restaurantSidebarName) ?>
+    <?php
+    $restaurantSidebarNavClass = 'space-y-2 text-sm';
+    require __DIR__ . '/_sidebar_nav.php';
+    ?>
+</aside>
+
 <div class="min-h-screen relative overflow-hidden">
     <!-- фон -->
     <div class="pointer-events-none absolute inset-0">
@@ -186,7 +233,7 @@ $exportUrl = '?' . http_build_query($exportParams);
         <div class="absolute -bottom-40 right-0 w-80 h-80 bg-sky-500/10 blur-3xl rounded-full"></div>
     </div>
 
-    <div class="relative z-10 flex flex-col min-h-screen">
+    <div class="relative z-10 flex flex-col min-h-screen md:pl-72">
         <!-- header -->
         <header class="border-b border-slate-800/70 bg-slate-950/90 backdrop-blur-xl">
             <div class="max-w-6xl mx-auto px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -318,19 +365,46 @@ $exportUrl = '?' . http_build_query($exportParams);
                         <div class="space-y-3">
                             <?php foreach ($orders as $order): ?>
                                 <?php
+                                $orderId = (int)($order['id'] ?? 0);
                                 $createdShort = date('d.m H:i', strtotime($order['created_at'] ?? 'now'));
                                 $statusClass  = badge_payment_status_class($order['payment_status'] ?? '');
                                 $typeClass    = badge_payment_type_class($order['payment_type'] ?? '');
+                                $loyaltyCtx = $loyaltyContextByOrder[$orderId] ?? [
+                                    'guest_id' => 0,
+                                    'guest_card_id' => 0,
+                                    'loyalty_phone' => '',
+                                    'has_link' => false,
+                                    'has_card' => false,
+                                    'balance' => 0,
+                                    'manual_tx_count' => 0,
+                                    'manual_accrual_count' => 0,
+                                    'manual_spend_count' => 0,
+                                ];
+                                $loyaltyHasCard = !empty($loyaltyCtx['has_card']);
+                                $loyaltyHasLink = !empty($loyaltyCtx['has_link']);
+                                $loyaltyBalance = (int)($loyaltyCtx['balance'] ?? 0);
+                                $manualMarker = manager_loyalty_manual_marker($loyaltyCtx);
+                                $txTblLabel = function_exists('qr_public_owner_order_table_label')
+                                    ? qr_public_owner_order_table_label((string)($order['table_name'] ?? ''))
+                                    : (string)($order['table_name'] ?? '');
+                                if ($txTblLabel === '') {
+                                    $txTblLabel = '—';
+                                }
+                                $txTblIsDelivery = ($txTblLabel === 'Доставка');
                                 ?>
                                 <div class="bg-slate-950/80 border border-slate-800 rounded-3xl p-3 md:p-4 shadow-lg shadow-slate-950/60">
                                     <div class="flex flex-wrap items-start justify-between gap-3 mb-2">
                                         <div>
                                             <div class="text-xs text-slate-500">
                                                 Заказ #<span class="font-mono text-slate-100"><?= (int)$order['id'] ?></span>
-                                                · Стол:
-                                                <span class="text-slate-100">
-                                                    <?= e($order['table_name'] ?? '—') ?>
-                                                </span>
+                                                <?php if ($txTblIsDelivery): ?>
+                                                    · <span class="text-slate-100"><?= e($txTblLabel) ?></span>
+                                                <?php else: ?>
+                                                    · Стол:
+                                                    <span class="text-slate-100">
+                                                        <?= e($txTblLabel) ?>
+                                                    </span>
+                                                <?php endif; ?>
                                             </div>
                                             <div class="text-[11px] text-slate-500">
                                                 <?= e($createdShort) ?>
@@ -367,6 +441,34 @@ $exportUrl = '?' . http_build_query($exportParams);
                                         <span class="text-slate-100">
                                             <?= human_order_status($order['order_status'] ?? '') ?>
                                         </span>
+                                    </div>
+
+                                    <div class="mt-2 flex flex-wrap items-center gap-2">
+                                        <?php if ($loyaltyHasCard): ?>
+                                            <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] bg-emerald-500/10 border-emerald-500/60 text-emerald-100">
+                                                Карта есть
+                                            </span>
+                                        <?php elseif ($loyaltyHasLink): ?>
+                                            <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] bg-amber-500/10 border-amber-500/60 text-amber-100">
+                                                Карты нет
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] bg-slate-900/80 border-slate-700 text-slate-300">
+                                                Лояльность не привязана
+                                            </span>
+                                        <?php endif; ?>
+
+                                        <?php if ($loyaltyHasCard || (int)($loyaltyCtx['guest_id'] ?? 0) > 0): ?>
+                                            <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] bg-sky-500/10 border-sky-500/60 text-sky-100">
+                                                Баланс <?= number_format($loyaltyBalance, 0, '.', ' ') ?> бонусов
+                                            </span>
+                                        <?php endif; ?>
+
+                                        <?php if ($manualMarker['label'] !== ''): ?>
+                                            <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] <?= e($manualMarker['class']) ?>">
+                                                <?= e($manualMarker['label']) ?>
+                                            </span>
+                                        <?php endif; ?>
                                     </div>
                                 </div>
                             <?php endforeach; ?>

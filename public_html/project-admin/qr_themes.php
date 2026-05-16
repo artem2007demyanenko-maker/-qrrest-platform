@@ -6,7 +6,7 @@ require_login();
 $user = auth_user();
 
 
-if (!$user || ($user['global_role'] ?? '') !== 'project_owner') {
+if (!function_exists('is_project_owner') || !is_project_owner()) {
     http_response_code(403);
     echo "Forbidden";
     exit;

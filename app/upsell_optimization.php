@@ -282,7 +282,7 @@ if (!function_exists('get_upsell_optimization_suggestions')) {
 
         // New pair suggestion: take high-frequency co-order candidate that isn't already present in menu_item_upsells.
         $candidatePairs = rank_upsell_candidates($restaurantId);
-        $existing = _upsell_optimization_existing_pairs($restaurantId);
+        $ruleStates = _upsell_optimization_rule_state_map($restaurantId);
         foreach ($candidatePairs as $c) {
             $b = (int)($c['base_item_id'] ?? 0);
             $u = (int)($c['upsell_item_id'] ?? 0);
@@ -350,6 +350,302 @@ if (!function_exists('get_upsell_optimization_suggestions')) {
             cache_set($cacheKey, $result, 600); // 10 min
         }
         return $result;
+    }
+}
+
+if (!function_exists('get_upsell_optimization_dashboard')) {
+    /**
+     * Product-readable optimization layer for owner analytics.
+     *
+     * @return array{
+     *   summary: array{
+     *     pairs_analyzed:int,
+     *     strong_pairs:int,
+     *     weak_pairs:int,
+     *     low_data_pairs:int
+     *   },
+     *   top_performing: array<int,array<string,mixed>>,
+     *   needs_attention: array<int,array<string,mixed>>,
+     *   low_data: array<int,array<string,mixed>>
+     * }
+     */
+    function get_upsell_optimization_dashboard(int $restaurantId): array
+    {
+        $restaurantId = (int)$restaurantId;
+        $stats = get_upsell_conversion_stats($restaurantId);
+        $pairs = is_array($stats['pairs'] ?? null) ? $stats['pairs'] : [];
+        $ruleStates = _upsell_optimization_rule_state_map($restaurantId);
+
+        $result = [
+            'summary' => [
+                'pairs_analyzed' => 0,
+                'strong_pairs' => 0,
+                'weak_pairs' => 0,
+                'low_data_pairs' => 0,
+            ],
+            'top_performing' => [],
+            'needs_attention' => [],
+            'low_data' => [],
+        ];
+
+        if ($pairs === []) {
+            return $result;
+        }
+
+        foreach ($pairs as $pair) {
+            $baseId = (int)($pair['base_item_id'] ?? 0);
+            $upsellId = (int)($pair['upsell_item_id'] ?? 0);
+            $shown = (int)($pair['shown'] ?? 0);
+            $accepted = (int)($pair['accepted'] ?? 0);
+            $rate = (float)($pair['attach_rate'] ?? 0);
+            if ($baseId <= 0 || $upsellId <= 0 || $shown <= 0) {
+                continue;
+            }
+
+            $ruleState = $ruleStates[$baseId . ':' . $upsellId] ?? null;
+            $hasRule = is_array($ruleState);
+            $ruleActive = $hasRule ? (int)($ruleState['active'] ?? 0) === 1 : false;
+            $ruleWeight = $hasRule ? (int)($ruleState['weight'] ?? 0) : null;
+            $ruleId = $hasRule ? (int)($ruleState['id'] ?? 0) : 0;
+            $ruleStatusLabel = !$hasRule
+                ? 'Правила ещё нет'
+                : ($ruleActive ? 'Активна' : 'Отключена');
+            $ruleSummaryText = !$hasRule
+                ? 'Правило для пары ещё не создано'
+                : ($ruleActive ? ('Активна · вес ' . $ruleWeight) : ('Отключена · вес ' . $ruleWeight));
+            $row = [
+                'base_item_id' => $baseId,
+                'upsell_item_id' => $upsellId,
+                'base_item_name' => (string)($pair['base_item_name'] ?? ('ID ' . $baseId)),
+                'upsell_item_name' => (string)($pair['upsell_item_name'] ?? ('ID ' . $upsellId)),
+                'shown' => $shown,
+                'accepted' => $accepted,
+                'attach_rate' => $rate,
+                'attach_rate_pct' => round($rate * 100, 1),
+                'has_rule' => $hasRule,
+                'rule_exists' => $hasRule,
+                'rule_id' => $ruleId,
+                'rule_active' => $ruleActive,
+                'rule_weight' => $ruleWeight,
+                'rule_status_label' => $ruleStatusLabel,
+                'rule_summary_text' => $ruleSummaryText,
+                'status_text' => '',
+                'action_text' => '',
+                'tone' => 'slate',
+            ];
+
+            $result['summary']['pairs_analyzed']++;
+
+            if ($shown < 20) {
+                $row['status_text'] = 'Мало данных';
+                $row['action_text'] = 'Пара ещё не набрала достаточно показов. Пока оставьте как есть и соберите больше данных.';
+                $row['tone'] = 'slate';
+                $result['summary']['low_data_pairs']++;
+                $result['low_data'][] = $row;
+                continue;
+            }
+
+            if ($rate >= 0.10 && $accepted >= 3) {
+                $row['status_text'] = 'Работает хорошо';
+                $row['action_text'] = $hasRule
+                    ? 'Можно усилить: поднять вес правила или чаще использовать эту пару в меню.'
+                    : 'Пара уже работает хорошо. Стоит закрепить её как явное правило допродажи.';
+                $row['tone'] = 'emerald';
+                $result['summary']['strong_pairs']++;
+                $result['top_performing'][] = $row;
+                continue;
+            }
+
+            if (($shown >= 40 && $accepted <= 1) || ($shown >= 25 && $rate < 0.04)) {
+                $row['status_text'] = 'Часто показывается, редко добавляют';
+                $row['action_text'] = $hasRule
+                    ? 'Стоит протестировать другую пару или временно отключить это правило.'
+                    : 'Пара выглядит слабой. Лучше заменить рекомендацию на более логичную.';
+                $row['tone'] = 'amber';
+                $result['summary']['weak_pairs']++;
+                $result['needs_attention'][] = $row;
+                continue;
+            }
+
+            if ($rate >= 0.06 && $accepted >= 2) {
+                $row['status_text'] = 'Есть потенциал';
+                $row['action_text'] = 'Пара уже показывает спрос. Дайте ей ещё трафика и проверьте результат через неделю.';
+                $row['tone'] = 'sky';
+                $result['top_performing'][] = $row;
+                continue;
+            }
+
+            $row['status_text'] = 'Пока неубедительно';
+            $row['action_text'] = 'Наблюдайте ещё немного. Если конверсия не вырастет, замените или ослабьте эту пару.';
+            $row['tone'] = 'amber';
+            $result['summary']['weak_pairs']++;
+            $result['needs_attention'][] = $row;
+        }
+
+        usort($result['top_performing'], static function (array $a, array $b): int {
+            $rateCmp = ($b['attach_rate'] <=> $a['attach_rate']);
+            if ($rateCmp !== 0) {
+                return $rateCmp;
+            }
+            return ($b['shown'] <=> $a['shown']);
+        });
+        usort($result['needs_attention'], static function (array $a, array $b): int {
+            $shownCmp = ($b['shown'] <=> $a['shown']);
+            if ($shownCmp !== 0) {
+                return $shownCmp;
+            }
+            return ($a['attach_rate'] <=> $b['attach_rate']);
+        });
+        usort($result['low_data'], static function (array $a, array $b): int {
+            return ($b['shown'] <=> $a['shown']);
+        });
+
+        $result['top_performing'] = array_slice($result['top_performing'], 0, 5);
+        $result['needs_attention'] = array_slice($result['needs_attention'], 0, 5);
+        $result['low_data'] = array_slice($result['low_data'], 0, 5);
+
+        return $result;
+    }
+}
+
+if (!function_exists('upsell_pair_exists_in_rules')) {
+    function upsell_pair_exists_in_rules(int $restaurantId, int $baseItemId, int $upsellItemId): bool
+    {
+        $restaurantId = (int)$restaurantId;
+        $baseItemId = (int)$baseItemId;
+        $upsellItemId = (int)$upsellItemId;
+        if ($restaurantId <= 0 || $baseItemId <= 0 || $upsellItemId <= 0 || !function_exists('db')) {
+            return false;
+        }
+        if (function_exists('db_table_exists') && !db_table_exists('menu_item_upsells')) {
+            return false;
+        }
+        try {
+            $stmt = db()->prepare("SELECT 1 FROM menu_item_upsells WHERE restaurant_id = ? AND base_item_id = ? AND upsell_item_id = ? LIMIT 1");
+            $stmt->execute([$restaurantId, $baseItemId, $upsellItemId]);
+            return (bool)$stmt->fetchColumn();
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+}
+
+if (!function_exists('_upsell_optimization_rule_state_map')) {
+    /**
+     * @return array<string,array{id:int,active:int,weight:int}>
+     */
+    function _upsell_optimization_rule_state_map(int $restaurantId): array
+    {
+        $restaurantId = (int)$restaurantId;
+        $out = [];
+        if ($restaurantId <= 0 || !function_exists('db')) {
+            return $out;
+        }
+        if (function_exists('db_table_exists') && !db_table_exists('menu_item_upsells')) {
+            return $out;
+        }
+        try {
+            $pdo = db();
+            $stmt = $pdo->prepare("SELECT id, base_item_id, upsell_item_id, active, weight FROM menu_item_upsells WHERE restaurant_id = ?");
+            $stmt->execute([$restaurantId]);
+            while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $b = (int)($r['base_item_id'] ?? 0);
+                $u = (int)($r['upsell_item_id'] ?? 0);
+                if ($b <= 0 || $u <= 0) {
+                    continue;
+                }
+                $out[$b . ':' . $u] = [
+                    'id' => (int)($r['id'] ?? 0),
+                    'active' => (int)($r['active'] ?? 0),
+                    'weight' => (int)($r['weight'] ?? 0),
+                ];
+            }
+        } catch (Throwable $e) {
+            return $out;
+        }
+        return $out;
+    }
+}
+
+if (!function_exists('upsell_quick_boost_pair')) {
+    /**
+     * @return array{success:bool,message:string}
+     */
+    function upsell_quick_boost_pair(int $restaurantId, int $baseItemId, int $upsellItemId, int $delta = 50): array
+    {
+        $restaurantId = (int)$restaurantId;
+        $baseItemId = (int)$baseItemId;
+        $upsellItemId = (int)$upsellItemId;
+        $delta = max(10, min(300, (int)$delta));
+
+        if ($restaurantId <= 0 || $baseItemId <= 0 || $upsellItemId <= 0 || $baseItemId === $upsellItemId) {
+            return ['success' => false, 'message' => 'Некорректная пара для усиления.'];
+        }
+        if (!function_exists('db')) {
+            return ['success' => false, 'message' => 'База данных недоступна.'];
+        }
+
+        try {
+            $pdo = db();
+            $stmt = $pdo->prepare("SELECT id FROM menu_items WHERE id IN (?, ?) AND restaurant_id = ? AND available = 1");
+            $stmt->execute([$baseItemId, $upsellItemId, $restaurantId]);
+            $ids = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            if (count($ids) < 2) {
+                return ['success' => false, 'message' => 'Оба блюда должны принадлежать ресторану и быть доступны.'];
+            }
+
+            $exists = $pdo->prepare("SELECT id, weight FROM menu_item_upsells WHERE restaurant_id = ? AND base_item_id = ? AND upsell_item_id = ? LIMIT 1");
+            $exists->execute([$restaurantId, $baseItemId, $upsellItemId]);
+            $row = $exists->fetch(PDO::FETCH_ASSOC);
+            if ($row && isset($row['id'])) {
+                $newWeight = max(0, min(1000, (int)($row['weight'] ?? 0) + $delta));
+                $upd = $pdo->prepare("UPDATE menu_item_upsells SET weight = ?, active = 1, updated_at = NOW() WHERE id = ? AND restaurant_id = ?");
+                $upd->execute([$newWeight, (int)$row['id'], $restaurantId]);
+                return ['success' => true, 'message' => 'Пара усилена: вес правила увеличен.'];
+            }
+
+            $ins = $pdo->prepare("INSERT INTO menu_item_upsells (restaurant_id, base_item_id, upsell_item_id, weight, active) VALUES (?, ?, ?, ?, 1)");
+            $ins->execute([$restaurantId, $baseItemId, $upsellItemId, 150]);
+            return ['success' => true, 'message' => 'Создано новое правило допродажи с повышенным весом.'];
+        } catch (Throwable $e) {
+            if (function_exists('error_log')) {
+                error_log('upsell_quick_boost_pair ' . $e->getMessage());
+            }
+            return ['success' => false, 'message' => 'Не удалось усилить пару. Попробуйте позже.'];
+        }
+    }
+}
+
+if (!function_exists('upsell_quick_disable_pair')) {
+    /**
+     * @return array{success:bool,message:string}
+     */
+    function upsell_quick_disable_pair(int $restaurantId, int $baseItemId, int $upsellItemId): array
+    {
+        $restaurantId = (int)$restaurantId;
+        $baseItemId = (int)$baseItemId;
+        $upsellItemId = (int)$upsellItemId;
+
+        if ($restaurantId <= 0 || $baseItemId <= 0 || $upsellItemId <= 0) {
+            return ['success' => false, 'message' => 'Некорректная пара для отключения.'];
+        }
+        if (!function_exists('db')) {
+            return ['success' => false, 'message' => 'База данных недоступна.'];
+        }
+
+        try {
+            $stmt = db()->prepare("UPDATE menu_item_upsells SET active = 0, updated_at = NOW() WHERE restaurant_id = ? AND base_item_id = ? AND upsell_item_id = ?");
+            $stmt->execute([$restaurantId, $baseItemId, $upsellItemId]);
+            if ($stmt->rowCount() > 0) {
+                return ['success' => true, 'message' => 'Пара отключена в правилах допродаж.'];
+            }
+            return ['success' => false, 'message' => 'Активное правило для этой пары не найдено.'];
+        } catch (Throwable $e) {
+            if (function_exists('error_log')) {
+                error_log('upsell_quick_disable_pair ' . $e->getMessage());
+            }
+            return ['success' => false, 'message' => 'Не удалось отключить пару. Попробуйте позже.'];
+        }
     }
 }
 
@@ -530,4 +826,3 @@ function upsell_optimization_publish_growth_suggestions(int $restaurantId): int
         return 0;
     }
 }
-

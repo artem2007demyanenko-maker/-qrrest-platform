@@ -1,6 +1,6 @@
 import { expect, expectNoServerErrors, expectPageHealthy, loginAs, test, visitReadOnly } from './fixtures';
 import { ownerCredentials } from './config';
-import { expectNoRuntimeText } from './test-helpers';
+import { expectNoRuntimeText, skipOrFail } from './test-helpers';
 
 const restaurantRoutes = [
   { name: 'dashboard analytics', path: '/restaurant/dashboard.php' },
@@ -13,7 +13,7 @@ const restaurantRoutes = [
 test.describe('Restaurant dashboard flow', () => {
   for (const route of restaurantRoutes) {
     test(`owner/admin can open ${route.name}`, async ({ page, diagnostics }) => {
-      test.skip(!ownerCredentials, 'Set QRREST_OWNER_EMAIL/PASSWORD or QRREST_ADMIN_EMAIL/PASSWORD to run restaurant dashboard smoke checks.');
+      skipOrFail(test.skip, !ownerCredentials, 'Set QRREST_OWNER_EMAIL/PASSWORD or QRREST_ADMIN_EMAIL/PASSWORD to run restaurant dashboard smoke checks.');
 
       await loginAs(page, ownerCredentials!);
       const response = await visitReadOnly(page, route.path);
@@ -25,7 +25,7 @@ test.describe('Restaurant dashboard flow', () => {
   }
 
   test('analytics summary endpoint returns valid JSON for dashboard', async ({ page }) => {
-    test.skip(!ownerCredentials, 'Set QRREST_OWNER_EMAIL/PASSWORD or QRREST_ADMIN_EMAIL/PASSWORD to run analytics endpoint smoke checks.');
+    skipOrFail(test.skip, !ownerCredentials, 'Set QRREST_OWNER_EMAIL/PASSWORD or QRREST_ADMIN_EMAIL/PASSWORD to run analytics endpoint smoke checks.');
 
     await loginAs(page, ownerCredentials!);
     const response = await page.request.get('/ajax/analytics_summary.php?range=today');

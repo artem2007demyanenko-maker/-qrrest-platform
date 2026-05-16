@@ -84,8 +84,8 @@ function auth_logout(): void
     session_destroy();
 }
 
-if (!function_exists('auth_request_expects_json')) {
-    function auth_request_expects_json(): bool
+if (!function_exists('is_api_request')) {
+    function is_api_request(): bool
     {
         $uri = (string)($_SERVER['REQUEST_URI'] ?? '');
         $path = (string)(parse_url($uri, PHP_URL_PATH) ?: '');
@@ -119,6 +119,13 @@ if (!function_exists('auth_request_expects_json')) {
     }
 }
 
+if (!function_exists('auth_request_expects_json')) {
+    function auth_request_expects_json(): bool
+    {
+        return function_exists('is_api_request') && is_api_request();
+    }
+}
+
 if (!function_exists('auth_json_error')) {
     function auth_json_error(string $message, int $status = 403, array $extra = []): void
     {
@@ -139,7 +146,7 @@ if (!function_exists('auth_json_error')) {
 if (!function_exists('auth_deny')) {
     function auth_deny(string $message = 'access_denied', int $status = 403): void
     {
-        if (function_exists('auth_request_expects_json') && auth_request_expects_json()) {
+        if (function_exists('is_api_request') && is_api_request()) {
             auth_json_error($message, $status);
         }
 
@@ -186,7 +193,7 @@ function require_login(): void
         return;
     }
     if (!auth_user()) {
-        if (function_exists('auth_request_expects_json') && auth_request_expects_json()) {
+        if (function_exists('is_api_request') && is_api_request()) {
             auth_json_error('auth_required', 401);
         }
         $currentUrl = $_SERVER['REQUEST_URI'] ?? '/';

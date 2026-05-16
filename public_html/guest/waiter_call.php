@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../../app/bootstrap.php';
+require_once __DIR__ . '/../../app/waiter_calls.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -29,15 +30,12 @@ if (!$pdo instanceof PDO) {
     exit;
 }
 
-if (file_exists(__DIR__ . '/../../app/schema_guard.php')) {
-    require_once __DIR__ . '/../../app/schema_guard.php';
-}
-
 // Validate table exists for this restaurant.
 $stmtTable = $pdo->prepare("
     SELECT id
-    FROM tables
-    WHERE id = :tid AND restaurant_id = :rid
+    FROM tables AS t
+    WHERE t.id = :tid AND t.restaurant_id = :rid
+    " . qr_public_sql_exclude_delivery($pdo, 't') . "
     LIMIT 1
 ");
 $stmtTable->execute([':tid' => $tableId, ':rid' => $restaurantId]);
@@ -60,25 +58,13 @@ if ($orderId > 0) {
     }
 }
 
-// Ensure waiter_calls table exists.
-try {
-    if (!function_exists('db_table_exists') || !db_table_exists('waiter_calls')) {
-        $pdo->exec("
-            CREATE TABLE IF NOT EXISTS waiter_calls (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                restaurant_id INT NOT NULL,
-                table_id INT NOT NULL,
-                order_id INT NULL,
-                status VARCHAR(20) NOT NULL DEFAULT 'active',
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                resolved_at DATETIME NULL,
-                KEY idx_rest_table (restaurant_id, table_id),
-                KEY idx_rest_status (restaurant_id, status)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        ");
-    }
-} catch (Throwable $e) {
-    // If creation fails (permissions), feature will degrade gracefully.
+if (!waiter_calls_require_table()) {
+    http_response_code(503);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Функция временно недоступна',
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
 }
 
 $now = time();
@@ -160,4 +146,3 @@ echo json_encode([
 ], JSON_UNESCAPED_UNICODE);
 
 exit;
-

@@ -1,7 +1,19 @@
 <?php
 
 require_once __DIR__ . '/../../app/bootstrap.php';
+if (file_exists(__DIR__ . '/../../app/schema_guard.php')) {
+    require_once __DIR__ . '/../../app/schema_guard.php';
+}
+if (file_exists(__DIR__ . '/../../app/runtime_schema_bootstrap.php')) {
+    require_once __DIR__ . '/../../app/runtime_schema_bootstrap.php';
+}
+if (file_exists(__DIR__ . '/../../app/billing.php')) {
+    require_once __DIR__ . '/../../app/billing.php';
+}
 require_once __DIR__ . '/../../app/crm_repo.php';
+if (file_exists(__DIR__ . '/../../app/crm_campaign_repo.php')) {
+    require_once __DIR__ . '/../../app/crm_campaign_repo.php';
+}
 if (file_exists(__DIR__ . '/../../app/feedback_crm_bridge.php')) {
     require_once __DIR__ . '/../../app/feedback_crm_bridge.php';
 }
@@ -10,6 +22,9 @@ if (file_exists(__DIR__ . '/../../app/retention_analytics.php')) {
 }
 if (file_exists(__DIR__ . '/../../app/guest_retention.php')) {
     require_once __DIR__ . '/../../app/guest_retention.php';
+}
+if (file_exists(__DIR__ . '/../../app/guest_loyalty.php')) {
+    require_once __DIR__ . '/../../app/guest_loyalty.php';
 }
 
 $rid = bin2hex(random_bytes(4));
@@ -33,6 +48,13 @@ $trialRequiresUpgrade = is_demo_mode() ? false : (function_exists('trial_guard_r
 $trialInfo = function_exists('trial_guard_trial_info') ? trial_guard_trial_info() : ['is_trial' => false, 'days_left' => 0, 'is_expired' => false, 'has_active_paid_plan' => false];
 
 $restId = (int)$currentRestaurant['id'];
+$authUser = auth_user();
+if (function_exists('runtime_schema_ensure_crm_core')) {
+    runtime_schema_ensure_crm_core(db());
+}
+$crmPaywallContext = function_exists('billing_get_feature_paywall_context')
+    ? billing_get_feature_paywall_context((int)($authUser['id'] ?? 0), $restId, 'crm')
+    : null;
 
 // Soft CRM gating: allow read-only access; block mutations when feature disabled (demo unchanged).
 $crmEnabled = true;
@@ -53,16 +75,37 @@ if (empty($_SESSION['csrf'])) {
 
 $success = null;
 $errors = [];
+$warnings = [];
+$crmSchema = [
+    'guests' => function_exists('db_table_exists') ? db_table_exists('guests') : true,
+    'crm_campaigns' => function_exists('db_table_exists') ? db_table_exists('crm_campaigns') : true,
+    'crm_visits' => function_exists('db_table_exists') ? db_table_exists('crm_visits') : true,
+];
+$crmSchemaReady = $crmSchema['guests'] && $crmSchema['crm_campaigns'] && $crmSchema['crm_visits'];
+if (!$crmSchemaReady) {
+    // Fallback: keep page readable and analytics blocks in empty-state mode.
+    foreach ($crmSchema as $tableName => $exists) {
+        if (!$exists) {
+            $warnings[] = 'Нет части данных: таблица «' . $tableName . '» не найдена. CRM открыт в режиме просмотра с ограничениями — примените миграции.';
+            error_log('CRM_SCHEMA_MISSING table=' . $tableName . ' restaurant_id=' . $restId);
+        }
+    }
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_demo_mode()) {
+    if (!$crmSchemaReady) {
+        $errors[] = 'CRM работает в read-only режиме: часть таблиц схемы отсутствует. Примените миграции и повторите действие.';
+    }
     $csrfOk = isset($_SESSION['csrf'], $_POST['csrf']) && hash_equals((string)$_SESSION['csrf'], (string)$_POST['csrf']);
-    if (!$csrfOk) {
+    if ($errors === [] && !$csrfOk) {
         $errors[] = 'Неверный токен. Обновите страницу.';
-    } else {
+    } elseif ($errors === []) {
         $action = trim($_POST['action'] ?? '');
         $allowWithoutFullCrm = ($action === 'save_manual_return')
             || $action === 'create_inactive_return_draft'
             || $action === 'bulk_inactive_return_drafts'
+            || $action === 'create_loyalty_retention_draft'
+            || $action === 'bulk_loyalty_retention_drafts'
             || (function_exists('crm_outbox_manual_prepare_action_allowed')
                 && crm_outbox_manual_prepare_action_allowed($restId, $action, $_POST));
         if (!$crmEnabled && !$allowWithoutFullCrm) {
@@ -294,6 +337,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !is_demo_mode()) {
             } else {
                 $errors[] = 'Функция недоступна.';
             }
+        } elseif ($action === 'create_loyalty_retention_draft') {
+            $guestId = (int)($_POST['guest_id'] ?? 0);
+            $segmentType = trim((string)($_POST['segment_type'] ?? ''));
+            $templateKey = trim((string)($_POST['template_key'] ?? ''));
+            if ($guestId <= 0 || $segmentType === '') {
+                $errors[] = 'Некорректный loyalty-сценарий.';
+            } elseif (!function_exists('crm_create_loyalty_retention_outbox_draft')) {
+                $errors[] = 'Функция недоступна.';
+            } else {
+                $res = crm_create_loyalty_retention_outbox_draft($restId, $segmentType, $guestId, $templateKey !== '' ? $templateKey : null);
+                if (!empty($res['ok'])) {
+                    $success = 'Retention-черновик создан из приоритетного сценария. Проверьте блок «Исходящие сообщения» (фильтр «Черновики»).';
+                } elseif (($res['reason'] ?? '') === 'duplicate') {
+                    $errors[] = 'Для этого гостя уже есть свежий retention draft/outbox. Откройте блок «Исходящие сообщения», чтобы продолжить работу без дубля.';
+                } else {
+                    $errors[] = 'Не удалось создать loyalty-черновик.';
+                }
+            }
+        } elseif ($action === 'bulk_loyalty_retention_drafts') {
+            $segmentType = trim((string)($_POST['segment_type'] ?? ''));
+            $templateKey = trim((string)($_POST['template_key'] ?? ''));
+            if ($segmentType === '') {
+                $errors[] = 'Не выбран loyalty-сегмент.';
+            } elseif (!function_exists('crm_bulk_create_loyalty_retention_outbox_drafts')) {
+                $errors[] = 'Функция недоступна.';
+            } else {
+                $res = crm_bulk_create_loyalty_retention_outbox_drafts($restId, $segmentType, 50, $templateKey !== '' ? $templateKey : null);
+                $success = 'Loyalty-черновиков создано: ' . (int)$res['created'] . '. Пропущено как дубли: ' . (int)$res['skipped_duplicate'] . '.';
+                if ((int)$res['skipped_other'] > 0) {
+                    $success .= ' Прочие пропуски: ' . (int)$res['skipped_other'] . '.';
+                }
+            }
         }
     }
 }
@@ -325,6 +400,15 @@ if (is_demo_mode()) {
     } catch (Throwable $e) {
         error_log('RESTAURANT_CRM list rid=' . $rid . ' ' . $e->getMessage());
     }
+}
+$outboxEmptyTitle = 'Нет сообщений';
+$outboxEmptyText = 'Нет записей со статусом «' . $statusFilterUiLabel . '».';
+if ($statusFilter === 'draft') {
+    $outboxEmptyTitle = 'Черновиков пока нет';
+    $outboxEmptyText = 'Создайте loyalty-сценарий или ручное сообщение выше — новые черновики появятся здесь.';
+} elseif ($statusFilter === 'ready_manual') {
+    $outboxEmptyTitle = 'Нет сообщений, готовых к ручной отправке';
+    $outboxEmptyText = 'Когда вы подготовите сообщение и сохраните его как «готово к ручной отправке», оно появится здесь.';
 }
 
 $retentionSuggestions = [];
@@ -359,8 +443,165 @@ $simpleRetentionOpps = [];
 if (function_exists('get_retention_opportunities')) {
     $simpleRetentionOpps = get_retention_opportunities($restId);
 }
+$loyaltySegmentCatalog = function_exists('crm_loyalty_retention_segment_catalog')
+    ? crm_loyalty_retention_segment_catalog()
+    : [];
+$loyaltyTemplateLibrary = function_exists('crm_loyalty_retention_template_library')
+    ? crm_loyalty_retention_template_library()
+    : [];
+$loyaltyRetentionScenarios = [];
+if (!is_demo_mode() && $loyaltySegmentCatalog !== [] && function_exists('crm_loyalty_retention_candidates')) {
+    foreach ($loyaltySegmentCatalog as $segmentType => $cfg) {
+        $candidates = crm_loyalty_retention_candidates($restId, $segmentType, 6);
+        $loyaltyRetentionScenarios[$segmentType] = [
+            'label' => (string)($cfg['label'] ?? $segmentType),
+            'description' => (string)($cfg['description'] ?? ''),
+            'goal' => (string)($cfg['goal'] ?? ''),
+            'who' => (string)($cfg['who'] ?? ''),
+            'offer_framing' => (string)($cfg['offer_framing'] ?? ''),
+            'draft_title' => (string)($cfg['draft_title'] ?? ($cfg['label'] ?? $segmentType)),
+            'recommended_template_key' => function_exists('crm_loyalty_retention_default_template_key_for_segment')
+                ? crm_loyalty_retention_default_template_key_for_segment($segmentType)
+                : '',
+            'candidates' => $candidates,
+            'count' => count(crm_loyalty_retention_candidates($restId, $segmentType, 200)),
+        ];
+    }
+}
+$loyaltyScenarioAnalytics = [];
+if (!is_demo_mode() && function_exists('get_loyalty_retention_scenario_analytics_cached')) {
+    try {
+        $loyaltyScenarioAnalytics = get_loyalty_retention_scenario_analytics_cached($restId, 30);
+    } catch (Throwable $e) {
+        $loyaltyScenarioAnalytics = [];
+    }
+}
+$loyaltyScenarioCount = count($loyaltySegmentCatalog);
+$loyaltyScenarioCandidateTotal = 0;
+foreach ($loyaltyRetentionScenarios as $_scenario) {
+    $loyaltyScenarioCandidateTotal += (int)($_scenario['count'] ?? 0);
+}
+$loyaltyScenarioDraftsTotal = 0;
+$loyaltyScenarioReturnedGuestsTotal = 0;
+$loyaltyScenarioReturnedRevenueTotal = 0.0;
+foreach ($loyaltyScenarioAnalytics as $_stat) {
+    $loyaltyScenarioDraftsTotal += (int)($_stat['drafts_created'] ?? 0);
+    $loyaltyScenarioReturnedGuestsTotal += (int)($_stat['returned_guests'] ?? 0);
+    $loyaltyScenarioReturnedRevenueTotal += (float)($_stat['returned_revenue'] ?? 0);
+}
+$retentionPriorityQueue = function_exists('crm_loyalty_retention_priority_queue')
+    ? crm_loyalty_retention_priority_queue($restId, 8)
+    : [];
+$manualReturnOutboxSummary = function_exists('crm_manual_return_outbox_summary')
+    ? crm_manual_return_outbox_summary($restId, 30, 6)
+    : ['total' => 0, 'draft' => 0, 'ready_manual' => 0, 'processed' => 0, 'canceled' => 0, 'failed' => 0, 'loyalty_rows' => 0, 'fallback_rows' => 0, 'recent' => []];
+$crmSendBoardFetchRows = static function (string $status, int $limit) use ($restId): array {
+    if (is_demo_mode()) {
+        $demoRows = array_values(array_filter(demo_crm_outbox(), static function (array $row) use ($status): bool {
+            return (string)($row['status'] ?? '') === $status;
+        }));
+        return array_slice($demoRows, 0, $limit);
+    }
+    if (!function_exists('crm_list_outbox')) {
+        return [];
+    }
+    return crm_list_outbox($restId, $status, $limit);
+};
+$manualReturnStatusLabel = static function (string $status): string {
+    return match ($status) {
+        'draft' => 'Черновик',
+        'ready_manual' => 'Готово к ручной отправке',
+        'processed' => 'Отмечено как отправленное',
+        'canceled' => 'Отменено',
+        'failed' => 'Ошибка',
+        default => $status !== '' ? $status : '—',
+    };
+};
+$sendBoardReadyRows = array_merge(
+    $crmSendBoardFetchRows('ready_manual', 10),
+    $crmSendBoardFetchRows('pending', 10)
+);
+usort($sendBoardReadyRows, static function (array $a, array $b): int {
+    return strcmp((string)($a['scheduled_at'] ?? ''), (string)($b['scheduled_at'] ?? ''));
+});
+$sendBoardDraftRows = $crmSendBoardFetchRows('draft', 10);
+$sendBoardDoneRows = array_merge(
+    $crmSendBoardFetchRows('processed', 10),
+    $crmSendBoardFetchRows('failed', 6),
+    $crmSendBoardFetchRows('canceled', 6)
+);
+usort($sendBoardDoneRows, static function (array $a, array $b): int {
+    return strcmp((string)($b['scheduled_at'] ?? ''), (string)($a['scheduled_at'] ?? ''));
+});
+$sendBoardAllRows = array_merge($sendBoardReadyRows, $sendBoardDraftRows, $sendBoardDoneRows);
+$sendBoardOutcomeMap = function_exists('get_manual_return_outbox_outcome_map')
+    ? get_manual_return_outbox_outcome_map($restId, $sendBoardAllRows, 90)
+    : [];
+$crmOutboxBoardMeta = static function (array $row) use ($manualReturnStatusLabel, $sendBoardOutcomeMap): array {
+    $payload = json_decode((string)($row['payload_json'] ?? '{}'), true);
+    if (!is_array($payload)) {
+        $payload = [];
+    }
+    $msgText = (string)($payload['text'] ?? '');
+    $reason = (string)($payload['reason'] ?? ($payload['retention_reason'] ?? ($payload['cause'] ?? '')));
+    $templateName = trim((string)($payload['template_name'] ?? ''));
+    $segmentLabel = trim((string)($payload['segment_label'] ?? ($payload['draft_title'] ?? '')));
+    $suggested = $payload['suggested_items'] ?? ($payload['suggested_dishes'] ?? ($payload['suggested_item_names'] ?? null));
+    $suggestedNames = [];
+    if (is_array($suggested)) {
+        foreach ($suggested as $it) {
+            if (is_string($it) && trim($it) !== '') {
+                $suggestedNames[] = $it;
+            } elseif (is_array($it) && !empty($it['name'])) {
+                $suggestedNames[] = (string)$it['name'];
+            }
+        }
+    } elseif (is_string($suggested) && trim($suggested) !== '') {
+        $suggestedNames[] = $suggested;
+    }
+    $statusDb = (string)($row['status'] ?? '');
+    $outcome = $sendBoardOutcomeMap[(int)($row['id'] ?? 0)] ?? ['returned' => false, 'return_order_id' => 0, 'return_order_total' => 0.0, 'return_order_created_at' => '', 'days_to_return' => null];
+    return [
+        'status_db' => $statusDb,
+        'status_ui' => $manualReturnStatusLabel($statusDb),
+        'message_text' => $msgText,
+        'reason' => $reason,
+        'template_name' => $templateName,
+        'segment_label' => $segmentLabel,
+        'suggested_str' => $suggestedNames !== [] ? implode(', ', array_slice($suggestedNames, 0, 4)) : '—',
+        'returned' => !empty($outcome['returned']),
+        'return_order_id' => (int)($outcome['return_order_id'] ?? 0),
+        'return_order_total' => (float)($outcome['return_order_total'] ?? 0),
+        'return_order_created_at' => (string)($outcome['return_order_created_at'] ?? ''),
+        'days_to_return' => $outcome['days_to_return'] ?? null,
+    ];
+};
+$crmCampaignsSummaryRows = function_exists('crm_campaign_list') ? crm_campaign_list($restId) : [];
+$activeCampaignsCount = 0;
+foreach ($crmCampaignsSummaryRows as $_campaign) {
+    if ((int)($_campaign['active'] ?? 1) === 1) {
+        $activeCampaignsCount++;
+    }
+}
+$bestScenarioStats = [];
+if ($loyaltyScenarioAnalytics !== []) {
+    $bestScenarioStats = array_values($loyaltyScenarioAnalytics);
+    usort($bestScenarioStats, static function (array $a, array $b): int {
+        $revCmp = ((float)($b['returned_revenue'] ?? 0) <=> (float)($a['returned_revenue'] ?? 0));
+        if ($revCmp !== 0) {
+            return $revCmp;
+        }
+        $rateCmp = ((float)($b['return_rate'] ?? 0) <=> (float)($a['return_rate'] ?? 0));
+        if ($rateCmp !== 0) {
+            return $rateCmp;
+        }
+        return ((int)($b['returned_guests'] ?? 0) <=> (int)($a['returned_guests'] ?? 0));
+    });
+    $bestScenarioStats = array_slice($bestScenarioStats, 0, 3);
+}
 $comebackCandidates = [];
-if (file_exists(__DIR__ . '/../../app/guest_return_engine.php')) {
+if ($crmSchema['guests'] && $crmSchema['crm_visits'] && file_exists(__DIR__ . '/../../app/guest_return_engine.php')) {
+    // guest_return_engine depends on guest/visit history; fallback to empty list if schema is partial.
     require_once __DIR__ . '/../../app/guest_return_engine.php';
     $comebackCandidates = get_guest_return_candidates($restId, 30);
 }
@@ -408,10 +649,10 @@ if (!is_demo_mode() && function_exists('get_retention_attribution')) {
         $retentionAttributionBySuggestion = [];
     }
 }
-if (function_exists('get_retention_stats')) {
+if ($crmSchema['guests'] && $crmSchema['crm_visits'] && function_exists('get_retention_stats')) {
     $retentionStats = get_retention_stats($restId);
 }
-if (function_exists('get_guest_segments_summary')) {
+if ($crmSchema['guests'] && $crmSchema['crm_visits'] && function_exists('get_guest_segments_summary')) {
     $guestSegments = get_guest_segments_summary($restId);
 }
 
@@ -420,6 +661,7 @@ $guestSegFilter = trim((string)($_GET['gseg'] ?? 'all'));
 if (!in_array($guestSegFilter, ['all', 'new', 'active', 'inactive'], true)) {
     $guestSegFilter = 'all';
 }
+$profileGuestId = (int)($_GET['profile'] ?? 0);
 $historyGuestId = (int)($_GET['history'] ?? 0);
 $composeGuestId = (int)($_GET['compose'] ?? 0);
 
@@ -440,7 +682,10 @@ if (is_demo_mode()) {
         ];
     }
 } else {
-    $crmGuestsRowsRaw = function_exists('crm_restaurant_guests_dashboard_rows') ? crm_restaurant_guests_dashboard_rows($restId) : [];
+    // guests table can be missing on partially migrated environments; keep "no data" instead of throwing.
+    $crmGuestsRowsRaw = ($crmSchema['guests'] && function_exists('crm_restaurant_guests_dashboard_rows'))
+        ? crm_restaurant_guests_dashboard_rows($restId)
+        : [];
 }
 
 $crmGuestStats = ['total' => 0, 'new' => 0, 'active' => 0, 'inactive' => 0, 'last30' => 0, 'avg_check_global' => null];
@@ -513,9 +758,14 @@ if ($historyGuestId > 0) {
             ];
         }
     } else {
+        if (!$crmSchema['guests']) {
+            $historyGuestRow = null;
+            $historyOrders = [];
+        } else {
         $historyGuestRow = crm_guest_lookup($restId, $historyGuestId);
         if ($historyGuestRow) {
             $historyOrders = crm_guest_orders_history($restId, $historyGuestId, 40);
+        }
         }
     }
 }
@@ -530,7 +780,7 @@ if ($composeGuestId > 0) {
             }
         }
     } else {
-        $composeGuestRow = crm_guest_lookup($restId, $composeGuestId);
+        $composeGuestRow = $crmSchema['guests'] ? crm_guest_lookup($restId, $composeGuestId) : null;
     }
 }
 
@@ -549,11 +799,12 @@ if ($composeGuestRow) {
     }
 }
 
-$crmQueryBase = static function (array $extra) use ($guestSearchQ, $guestSegFilter, $statusFilter, $historyGuestId, $composeGuestId): string {
+$crmQueryBase = static function (array $extra) use ($guestSearchQ, $guestSegFilter, $statusFilter, $profileGuestId, $historyGuestId, $composeGuestId): string {
     $q = array_merge([
         'status' => $statusFilter,
         'gq' => $guestSearchQ !== '' ? $guestSearchQ : null,
         'gseg' => $guestSegFilter !== 'all' ? $guestSegFilter : null,
+        'profile' => $profileGuestId > 0 ? $profileGuestId : null,
         'history' => $historyGuestId > 0 ? $historyGuestId : null,
         'compose' => $composeGuestId > 0 ? $composeGuestId : null,
     ], $extra);
@@ -574,6 +825,77 @@ foreach ($inactiveReturnGuests as $_ir) {
         $inactiveReturnEligibleCount++;
     }
 }
+$crmGuestProfile = null;
+if ($profileGuestId > 0 && !is_demo_mode()) {
+    $profileBase = crm_guest_lookup($restId, $profileGuestId);
+    $profileMetrics = function_exists('crm_confirmed_guest_metrics_row') ? crm_confirmed_guest_metrics_row($restId, $profileGuestId) : null;
+    if ($profileBase || $profileMetrics) {
+        $crmGuestProfile = array_merge(is_array($profileBase) ? $profileBase : [], is_array($profileMetrics) ? $profileMetrics : []);
+        $crmGuestProfile['crm_guest_id'] = $profileGuestId;
+        $crmGuestProfile['orders'] = function_exists('crm_guest_orders_history') ? crm_guest_orders_history($restId, $profileGuestId, 5) : [];
+        $crmGuestProfile['retention_rows'] = function_exists('crm_guest_manual_return_history') ? crm_guest_manual_return_history($restId, $profileGuestId, 5) : [];
+        $crmGuestProfile['loyalty_balance'] = 0;
+        $crmGuestProfile['guest_name'] = trim((string)($crmGuestProfile['guest_display_name'] ?? ''));
+        $crmGuestProfile['card_token'] = '';
+        $crmGuestProfile['current_scenario'] = null;
+
+        $loyaltyGuestId = (int)($crmGuestProfile['loyalty_guest_id'] ?? 0);
+        if ($loyaltyGuestId > 0 && function_exists('db')) {
+            try {
+                $pdo = db();
+                if (function_exists('guest_loyalty_balance_by_guest_rest')) {
+                    $crmGuestProfile['loyalty_balance'] = guest_loyalty_balance_by_guest_rest($pdo, $restId, $loyaltyGuestId);
+                }
+                if (function_exists('guest_get_card_by_guest_rest')) {
+                    $cardRow = guest_get_card_by_guest_rest($pdo, $restId, $loyaltyGuestId);
+                    if ($cardRow) {
+                        if ($crmGuestProfile['guest_name'] === '') {
+                            $crmGuestProfile['guest_name'] = trim((string)($cardRow['name'] ?? ''));
+                        }
+                        $uidCol = array_key_exists('public_uid', $cardRow) ? 'public_uid' : 'card_uid';
+                        if (function_exists('guest_card_make_token')) {
+                            $crmGuestProfile['card_token'] = guest_card_make_token((string)($cardRow[$uidCol] ?? ''));
+                        }
+                    }
+                }
+            } catch (Throwable $e) {
+                // keep profile best-effort
+            }
+        }
+
+        if (function_exists('crm_loyalty_retention_segment_catalog') && function_exists('crm_loyalty_retention_candidate_by_guest')) {
+            $bestScenario = null;
+            foreach (array_keys(crm_loyalty_retention_segment_catalog()) as $segmentType) {
+                $candidate = crm_loyalty_retention_candidate_by_guest($restId, $segmentType, $profileGuestId);
+                if (!$candidate) {
+                    continue;
+                }
+                if (function_exists('crm_loyalty_retention_priority_score')) {
+                    $candidate['priority_score'] = crm_loyalty_retention_priority_score($candidate);
+                }
+                if ($bestScenario === null || (int)($candidate['priority_score'] ?? 0) > (int)($bestScenario['priority_score'] ?? 0)) {
+                    $bestScenario = $candidate;
+                }
+            }
+            $crmGuestProfile['current_scenario'] = $bestScenario;
+        }
+        $crmGuestProfile['blocking_outbox'] = function_exists('crm_outbox_recent_blocking_manual_return_state')
+            ? crm_outbox_recent_blocking_manual_return_state($restId, $profileGuestId, 7)
+            : null;
+        $crmGuestProfile['retention_outcomes'] = function_exists('get_manual_return_outbox_outcome_map')
+            ? get_manual_return_outbox_outcome_map($restId, $crmGuestProfile['retention_rows'], 90)
+            : [];
+        $crmGuestProfile['can_create_scenario_draft'] = false;
+        $crmGuestProfile['scenario_has_same_draft'] = false;
+        if (!empty($crmGuestProfile['current_scenario']) && is_array($crmGuestProfile['current_scenario'])) {
+            $currentScenarioType = (string)($crmGuestProfile['current_scenario']['segment_type'] ?? '');
+            $blockingOutbox = is_array($crmGuestProfile['blocking_outbox'] ?? null) ? $crmGuestProfile['blocking_outbox'] : null;
+            $crmGuestProfile['scenario_has_same_draft'] = $blockingOutbox !== null
+                && (string)($blockingOutbox['segment_type'] ?? '') === $currentScenarioType;
+            $crmGuestProfile['can_create_scenario_draft'] = $blockingOutbox === null;
+        }
+    }
+}
 ?>
 <!doctype html>
 <html lang="ru">
@@ -588,27 +910,20 @@ foreach ($inactiveReturnGuests as $_ir) {
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-50 flex overflow-x-hidden <?= is_demo_mode() ? 'demo-mode' : '' ?>">
 
-<aside class="w-full md:w-[260px] shrink-0 bg-[#0f172a] border-b md:border-b-0 md:border-r border-slate-800/90 md:min-h-screen">
-    <div class="p-5 md:p-6 md:sticky md:top-0 md:max-h-screen md:flex md:flex-col">
-        <?= brand_restaurant_sidebar_header_html($currentRestaurant['name'] ?? '') ?>
-        <nav class="flex flex-wrap md:flex-col gap-1 text-[15px] font-medium">
-            <a href="/restaurant/dashboard.php" class="px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors">Дашборд</a>
-            <a href="/restaurant/menu_manage.php" class="px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors">Меню</a>
-            <a href="/restaurant/tables.php" class="px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors">Столы</a>
-            <a href="/restaurant/qr_codes.php" class="px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors">QR-коды</a>
-            <a href="/restaurant/orders.php" class="px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors">Заказы</a>
-            <a href="/restaurant/crm.php" class="px-3 py-2.5 rounded-xl text-white bg-white/10 border border-white/10 shadow-sm">Гости и CRM</a>
-            <a href="/restaurant/crm_campaigns.php" class="px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors text-sm">Кампании</a>
-            <a href="/restaurant/settings.php" class="px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors">Настройки</a>
-        </nav>
-        <div class="mt-6 md:mt-auto pt-4 md:pt-8 border-t border-slate-800/80 md:border-0">
-            <a href="/logout.php" class="block px-3 py-2.5 rounded-xl text-sm text-slate-500 hover:text-red-300 hover:bg-red-500/10 transition-colors">Выйти</a>
-        </div>
-    </div>
-</aside>
+<?php
+$restaurantSidebarActive = 'crm';
+$restaurantSidebarName = (string)($currentRestaurant['name'] ?? '');
+require __DIR__ . '/_sidebar_mobile.php';
+require __DIR__ . '/_sidebar.php';
+?>
 
 <main class="flex-1 min-w-0 p-4 md:p-6 overflow-x-hidden">
     <div class="max-w-6xl mx-auto space-y-6 page-enter">
+        <?php
+        $businessNavActive = 'crm';
+        require __DIR__ . '/_restaurant_cabinet_context.php';
+        require __DIR__ . '/_restaurant_business_nav.php';
+        ?>
         <?php if ($success): ?>
             <div class="rounded-xl bg-emerald-500/10 border border-emerald-500/40 px-4 py-3.5 text-sm text-emerald-100" role="status"><?= e($success) ?></div>
         <?php endif; ?>
@@ -617,29 +932,73 @@ foreach ($inactiveReturnGuests as $_ir) {
                 <?php foreach ($errors as $err): ?><div><?= e($err) ?></div><?php endforeach; ?>
             </div>
         <?php endif; ?>
+        <?php if ($warnings): ?>
+            <div class="rounded-xl bg-amber-500/10 border border-amber-500/40 px-4 py-3.5 text-sm text-amber-100 space-y-1" role="status">
+                <?php foreach ($warnings as $warning): ?><div><?= e($warning) ?></div><?php endforeach; ?>
+            </div>
+        <?php endif; ?>
         <?php if (is_demo_mode()): ?>
         <div class="rounded-xl bg-amber-500/10 border border-amber-500/40 px-4 py-2.5 flex items-center justify-center gap-2 text-sm text-amber-200">
             <span aria-hidden="true">⚠</span>
-            <span>Demo environment — actions are simulated.</span>
+            <span>Демо-режим: действия только имитируются.</span>
         </div>
         <?php endif; ?>
-        <?php if ($trialRequiresUpgrade): ?>
-        <div class="rounded-2xl bg-red-500/10 border border-red-500/50 px-4 py-4 text-center">
-            <p class="text-slate-100 font-medium mb-2">Доступ к CRM доступен после активации подписки</p>
-            <a href="/restaurant/activate.php" class="inline-block px-4 py-2 rounded-xl bg-red-500/40 hover:bg-red-500/60 text-white text-sm font-medium">Активировать подписку</a>
+        <?php if ($trialRequiresUpgrade || !$crmEnabled): ?>
+        <?php
+            $ctx = is_array($crmPaywallContext) ? $crmPaywallContext : [];
+            $crmPaywallTone = (string)($ctx['tone'] ?? ($trialRequiresUpgrade ? 'rose' : 'amber'));
+            $crmPaywallClasses = [
+                'sky' => 'border-sky-500/40 bg-sky-500/10 text-sky-100',
+                'amber' => 'border-amber-500/40 bg-amber-500/10 text-amber-100',
+                'rose' => 'border-rose-500/40 bg-rose-500/10 text-rose-100',
+                'emerald' => 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100',
+            ];
+            $crmPaywallClass = $crmPaywallClasses[$crmPaywallTone] ?? $crmPaywallClasses['amber'];
+        ?>
+        <div class="rounded-2xl border px-4 py-4 <?= e($crmPaywallClass) ?>" role="status">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="max-w-3xl">
+                    <div class="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide">
+                        <?= e((string)($ctx['phase_label'] ?? 'Следующий шаг')) ?>
+                    </div>
+                    <p class="text-slate-100 font-medium mt-3"><?= e((string)($ctx['title'] ?? 'CRM возврата гостей')) ?></p>
+                    <p class="text-xs mt-1 opacity-90"><?= e((string)($ctx['subtitle'] ?? 'Подключите CRM, чтобы возвращать гостей системно.')) ?></p>
+                    <p class="text-xs mt-3 opacity-80"><?= e((string)($ctx['why_now'] ?? '')) ?></p>
+                </div>
+                <a href="<?= e((string)($ctx['cta_url'] ?? '/restaurant/activate.php?plan=growth')) ?>" class="inline-flex items-center px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm font-medium border border-white/10">
+                    <?= e((string)($ctx['cta_label'] ?? 'Открыть тариф GROWTH')) ?>
+                </a>
+            </div>
+            <div class="grid gap-3 lg:grid-cols-2 mt-4">
+                <div>
+                    <div class="text-[11px] font-semibold uppercase tracking-wide opacity-70">Что откроется после активации</div>
+                    <ul class="mt-2 space-y-2 text-xs opacity-90">
+                        <?php foreach (array_slice((array)($ctx['benefits'] ?? []), 0, 3) as $benefit): ?>
+                            <li class="flex items-start gap-2"><span class="mt-1">•</span><span><?= e((string)$benefit) ?></span></li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+                <div>
+                    <div class="text-[11px] font-semibold uppercase tracking-wide opacity-70">Что уже настроено и сохранится</div>
+                    <ul class="mt-2 space-y-2 text-xs opacity-90">
+                        <?php foreach (array_slice((array)($ctx['proof_items'] ?? []), 0, 3) as $proof): ?>
+                            <li class="flex items-start gap-2"><span class="mt-1">•</span><span><?= e((string)$proof) ?></span></li>
+                        <?php endforeach; ?>
+                    </ul>
+                    <p class="mt-3 text-[11px] opacity-70"><?= e((string)($ctx['preservation_text'] ?? '')) ?></p>
+                </div>
+            </div>
         </div>
         <?php elseif ($trialInfo['is_trial'] && !$trialInfo['is_expired']): ?>
         <div class="rounded-2xl bg-sky-500/10 border border-sky-500/50 px-4 py-3 flex flex-wrap items-center justify-between gap-2">
-            <span class="text-sm text-sky-100">Пробный период: осталось <?= (int)$trialInfo['days_left'] ?> дн.</span>
-            <a href="/restaurant/activate.php" class="px-3 py-1.5 rounded-xl bg-sky-500/30 hover:bg-sky-500/50 text-sky-100 text-sm font-medium">Выбрать тариф</a>
-        </div>
-        <?php endif; ?>
-
-        <?php if (!$crmEnabled): ?>
-        <div class="rounded-2xl border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-200" role="status">
-            <p class="font-medium">CRM-возврат гостей доступен на тарифе GROWTH</p>
-            <p class="text-xs text-amber-200/80 mt-1">Подключите CRM, чтобы возвращать гостей и запускать кампании.</p>
-            <a href="/owner/billing.php" class="inline-flex items-center mt-3 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium">Перейти на тариф GROWTH</a>
+            <span class="text-sm text-sky-100">
+                <?php if ((int)$trialInfo['days_left'] <= 3): ?>
+                    Пробный период скоро закончится: осталось <?= (int)$trialInfo['days_left'] ?> дн.
+                <?php else: ?>
+                    Пробный период: осталось <?= (int)$trialInfo['days_left'] ?> дн.
+                <?php endif; ?>
+            </span>
+            <a href="/restaurant/activate.php?plan=growth" class="px-3 py-1.5 rounded-xl bg-sky-500/30 hover:bg-sky-500/50 text-sky-100 text-sm font-medium">Сохранить доступ к CRM</a>
         </div>
         <?php endif; ?>
 
@@ -647,17 +1006,445 @@ foreach ($inactiveReturnGuests as $_ir) {
 
         <section id="guests-return" class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 md:p-8 space-y-6 shadow-xl shadow-black/10">
             <header>
-                <h1 class="text-2xl md:text-3xl font-bold text-white tracking-tight">Гости и возврат</h1>
+                <h1 class="text-2xl md:text-3xl font-bold text-white tracking-tight">CRM возврата гостей</h1>
                 <p class="text-slate-400 text-sm md:text-base mt-1"><?= e($currentRestaurant['name'] ?? '') ?></p>
-                <p class="text-xs text-slate-500 mt-2 max-w-2xl">База гостей из CRM и заказов этого ресторана. Сообщения не отправляются автоматически — только черновики и ручная отметка.</p>
+                <p class="text-xs text-slate-500 mt-2 max-w-2xl">Это единый экран loyalty-driven CRM: здесь ресторан видит готовые сценарии возврата, создаёт manual drafts и оценивает, какие сценарии реально приводят к новым paid visits. Авто-отправки нет.</p>
                 <p class="text-xs text-slate-600 mt-2">Порог «давно не был» для сегментов: <span class="text-slate-300 font-medium"><?= (int)$inactiveThresholdDays ?> дн.</span>
                     — <a href="/restaurant/settings.php#crm-return-settings" class="text-indigo-400 hover:text-indigo-300">изменить в настройках CRM</a></p>
             </header>
 
+            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div class="rounded-xl bg-[#111827] border border-slate-700/80 p-4">
+                    <div class="text-[11px] text-slate-500 uppercase tracking-wide">Готовые сценарии</div>
+                    <div class="text-2xl font-bold text-white mt-1"><?= $loyaltyScenarioCount ?></div>
+                    <div class="text-[11px] text-slate-500 mt-1">Готовые loyalty retention-сценарии</div>
+                </div>
+                <div class="rounded-xl bg-[#111827] border border-slate-700/80 p-4">
+                    <div class="text-[11px] text-slate-500 uppercase tracking-wide">Гости к возврату</div>
+                    <div class="text-2xl font-bold text-emerald-300 mt-1"><?= $loyaltyScenarioCandidateTotal ?></div>
+                    <div class="text-[11px] text-slate-500 mt-1">Суммарно по loyalty-сценариям</div>
+                </div>
+                <div class="rounded-xl bg-[#111827] border border-slate-700/80 p-4">
+                    <div class="text-[11px] text-slate-500 uppercase tracking-wide">Черновики за 30 дней</div>
+                    <div class="text-2xl font-bold text-cyan-300 mt-1"><?= $loyaltyScenarioDraftsTotal ?></div>
+                    <div class="text-[11px] text-slate-500 mt-1">Создано из loyalty-сценариев</div>
+                </div>
+                <div class="rounded-xl bg-[#111827] border border-slate-700/80 p-4">
+                    <div class="text-[11px] text-slate-500 uppercase tracking-wide">Возвраты по сценариям</div>
+                    <div class="text-2xl font-bold text-white mt-1"><?= $loyaltyScenarioReturnedGuestsTotal ?></div>
+                    <div class="text-[11px] text-slate-500 mt-1"><?= e(number_format($loyaltyScenarioReturnedRevenueTotal, 0, '.', ' ')) ?> ₽ выручки</div>
+                </div>
+            </div>
+
+            <div class="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                <div class="text-xs uppercase tracking-wide text-slate-500 mb-3">Как работать с экраном</div>
+                <div class="flex flex-wrap gap-2">
+                    <a href="#loyalty-scenarios" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-medium">1. Сценарии и кандидаты</a>
+                    <a href="#crm-outbox" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-medium">2. Черновики и исходящие</a>
+                    <a href="#loyalty-analytics" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-medium">3. Что реально работает</a>
+                    <a href="#crm-secondary-tools" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-medium">4. Дополнительные инструменты</a>
+                </div>
+            </div>
+
+            <?php if (is_array($crmGuestProfile)): ?>
+            <section id="crm-guest-profile" class="rounded-2xl border border-sky-500/20 bg-gradient-to-br from-sky-500/5 to-slate-900/60 p-5 md:p-6 space-y-4">
+                <?php
+                $profileBlockingOutbox = is_array($crmGuestProfile['blocking_outbox'] ?? null) ? $crmGuestProfile['blocking_outbox'] : null;
+                $profileBlockingStatus = $profileBlockingOutbox ? $manualReturnStatusLabel((string)($profileBlockingOutbox['status'] ?? '')) : '';
+                $profileBlockingSegment = trim((string)($profileBlockingOutbox['segment_label'] ?? $profileBlockingOutbox['segment_type'] ?? ''));
+                $profileCurrentScenario = (!empty($crmGuestProfile['current_scenario']) && is_array($crmGuestProfile['current_scenario'])) ? $crmGuestProfile['current_scenario'] : null;
+                $profileCurrentScenarioType = (string)($profileCurrentScenario['segment_type'] ?? '');
+                $profileCurrentTemplateKey = (string)($profileCurrentScenario['recommended_template_key'] ?? '');
+                $profileCurrentTemplateName = (string)($profileCurrentScenario['recommended_template_name'] ?? '');
+                $profileScenarioHasSameDraft = !empty($crmGuestProfile['scenario_has_same_draft']);
+                $profileCanCreateScenarioDraft = !empty($crmGuestProfile['can_create_scenario_draft']);
+                $profileOutboxLink = $crmQueryBase(['status' => 'draft', 'compose' => null, 'history' => null]) . '#crm-outbox';
+                ?>
+                <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                    <div>
+                        <div class="text-xs uppercase tracking-wide text-sky-300/80">CRM guest mini-profile</div>
+                        <h2 class="text-lg font-bold text-white mt-1">
+                            <?= e(($crmGuestProfile['guest_name'] ?? '') !== '' ? (string)$crmGuestProfile['guest_name'] : ((string)($crmGuestProfile['phone'] ?? '') !== '' ? (string)$crmGuestProfile['phone'] : ('CRM guest #' . (int)$crmGuestProfile['crm_guest_id']))) ?>
+                        </h2>
+                        <div class="text-xs text-slate-500 mt-1">
+                            CRM guest #<?= (int)$crmGuestProfile['crm_guest_id'] ?>
+                            <?php if (!empty($crmGuestProfile['phone'])): ?> · <?= e((string)$crmGuestProfile['phone']) ?><?php endif; ?>
+                            <?php if (!empty($crmGuestProfile['loyalty_guest_id'])): ?> · loyalty guest #<?= (int)$crmGuestProfile['loyalty_guest_id'] ?><?php endif; ?>
+                        </div>
+                        <?php if ($profileBlockingOutbox): ?>
+                            <div class="mt-3 inline-flex items-center rounded-xl border border-violet-500/20 bg-violet-500/10 px-3 py-2 text-[11px] text-violet-100">
+                                В работе: <?= e($profileBlockingStatus) ?><?php if ($profileBlockingSegment !== ''): ?> · <?= e($profileBlockingSegment) ?><?php endif; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <?php if ($profileCurrentScenario && $profileCanCreateScenarioDraft): ?>
+                            <form method="post" class="inline-flex">
+                                <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
+                                <input type="hidden" name="action" value="create_loyalty_retention_draft">
+                                <input type="hidden" name="guest_id" value="<?= (int)$crmGuestProfile['crm_guest_id'] ?>">
+                                <input type="hidden" name="segment_type" value="<?= e($profileCurrentScenarioType) ?>">
+                                <input type="hidden" name="template_key" value="<?= e($profileCurrentTemplateKey) ?>">
+                                <button type="submit" class="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold">Создать черновик по сценарию</button>
+                            </form>
+                        <?php elseif ($profileCurrentScenario && $profileScenarioHasSameDraft): ?>
+                            <a href="<?= e($profileOutboxLink) ?>" class="px-3 py-2 rounded-xl bg-violet-500/15 border border-violet-500/30 text-violet-200 text-xs font-semibold">Черновик уже есть</a>
+                        <?php elseif ($profileBlockingOutbox): ?>
+                            <a href="<?= e($profileOutboxLink) ?>" class="px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs font-semibold">Гость уже в работе</a>
+                        <?php endif; ?>
+                        <a href="<?= e($crmQueryBase(['compose' => (int)$crmGuestProfile['crm_guest_id'], 'history' => null])) ?>#crm-compose" class="px-3 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold">Открыть ручное сообщение</a>
+                        <a href="<?= e($crmQueryBase(['history' => (int)$crmGuestProfile['crm_guest_id'], 'compose' => null])) ?>#guests-base" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium">Смотреть заказы гостя</a>
+                        <a href="#crm-guest-profile-touches" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium">Смотреть retention touches</a>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 xl:grid-cols-5 gap-3">
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                        <div class="text-[11px] uppercase tracking-wide text-slate-500">Бонусный баланс</div>
+                        <div class="text-2xl font-bold text-emerald-300 mt-1"><?= (int)($crmGuestProfile['loyalty_balance'] ?? 0) ?></div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                        <div class="text-[11px] uppercase tracking-wide text-slate-500">Paid visits</div>
+                        <div class="text-2xl font-bold text-white mt-1"><?= (int)($crmGuestProfile['visits_count'] ?? 0) ?></div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                        <div class="text-[11px] uppercase tracking-wide text-slate-500">Последний paid visit</div>
+                        <div class="text-sm font-semibold text-slate-100 mt-2"><?= !empty($crmGuestProfile['last_seen_at']) ? e((string)$crmGuestProfile['last_seen_at']) : '—' ?></div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                        <div class="text-[11px] uppercase tracking-wide text-slate-500">Заказы / выручка</div>
+                        <div class="text-sm font-semibold text-slate-100 mt-2"><?= (int)($crmGuestProfile['order_count'] ?? 0) ?> · <?= e(number_format((float)($crmGuestProfile['total_spent'] ?? 0), 0, '.', ' ')) ?> ₽</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                        <div class="text-[11px] uppercase tracking-wide text-slate-500">Карта ресторана</div>
+                        <div class="text-sm font-semibold text-slate-100 mt-2"><?= !empty($crmGuestProfile['card_token']) ? 'Есть карта' : 'Нет карты' ?></div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/50 p-4 space-y-3">
+                        <div class="text-sm font-semibold text-slate-100">Актуальный сценарий возврата</div>
+                        <?php if ($profileCurrentScenario): ?>
+                            <?php $profileScenario = $profileCurrentScenario; ?>
+                            <div class="text-sm font-medium text-emerald-300"><?= e((string)($profileScenario['segment_label'] ?? $profileScenario['segment_type'] ?? 'Сценарий')) ?></div>
+                            <div class="text-xs text-slate-400"><?= e((string)($profileScenario['reason_text'] ?? '')) ?></div>
+                            <div class="text-[11px] text-slate-500">Шаблон по умолчанию: <?= e((string)($profileScenario['recommended_template_name'] ?? '—')) ?></div>
+                            <div class="text-xs text-slate-300 bg-slate-900/70 border border-slate-800 rounded-lg px-3 py-2"><?= e((string)($profileScenario['message_text'] ?? '')) ?></div>
+                            <div class="flex flex-wrap gap-2 pt-1">
+                                <?php if ($profileCanCreateScenarioDraft): ?>
+                                    <form method="post" class="inline-flex">
+                                        <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
+                                        <input type="hidden" name="action" value="create_loyalty_retention_draft">
+                                        <input type="hidden" name="guest_id" value="<?= (int)$crmGuestProfile['crm_guest_id'] ?>">
+                                        <input type="hidden" name="segment_type" value="<?= e($profileCurrentScenarioType) ?>">
+                                        <input type="hidden" name="template_key" value="<?= e($profileCurrentTemplateKey) ?>">
+                                        <button type="submit" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold">Создать черновик</button>
+                                    </form>
+                                <?php elseif ($profileScenarioHasSameDraft): ?>
+                                    <a href="<?= e($profileOutboxLink) ?>" class="px-3 py-1.5 rounded-lg bg-violet-500/15 border border-violet-500/30 text-violet-200 text-[11px] font-semibold">Черновик уже есть</a>
+                                <?php elseif ($profileBlockingOutbox): ?>
+                                    <a href="<?= e($profileOutboxLink) ?>" class="px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-200 text-[11px] font-semibold">Гость уже в работе</a>
+                                <?php endif; ?>
+                                <a href="<?= e($crmQueryBase(['compose' => (int)$crmGuestProfile['crm_guest_id'], 'history' => null])) ?>#crm-compose" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-medium">Открыть ручное сообщение</a>
+                            </div>
+                        <?php else: ?>
+                            <div class="text-sm text-slate-400">Сейчас для этого гостя нет явного loyalty-сценария в очереди.</div>
+                        <?php endif; ?>
+                    </div>
+
+                    <div id="crm-guest-profile-orders" class="rounded-xl border border-slate-800 bg-slate-950/50 p-4 space-y-3">
+                        <div class="text-sm font-semibold text-slate-100">Последние заказы</div>
+                        <?php if (($crmGuestProfile['orders'] ?? []) === []): ?>
+                            <div class="text-sm text-slate-400">Подтверждённых заказов пока нет.</div>
+                        <?php else: ?>
+                            <div class="space-y-2">
+                                <?php foreach (array_slice((array)$crmGuestProfile['orders'], 0, 5) as $orderRow): ?>
+                                    <div class="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-[11px] text-slate-300">
+                                        <div class="font-medium text-slate-100">Заказ #<?= (int)($orderRow['id'] ?? 0) ?> · <?= e(number_format((float)($orderRow['order_total'] ?? 0), 0, '.', ' ')) ?> ₽</div>
+                                        <div class="text-slate-500 mt-1"><?= e((string)($orderRow['created_at'] ?? '')) ?> · <?= e((string)($orderRow['payment_status'] ?? '')) ?> / <?= e((string)($orderRow['order_status'] ?? '')) ?></div>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+
+                    <div id="crm-guest-profile-touches" class="rounded-xl border border-slate-800 bg-slate-950/50 p-4 space-y-3">
+                        <div class="text-sm font-semibold text-slate-100">Последние retention touches</div>
+                        <?php if (($crmGuestProfile['retention_rows'] ?? []) === []): ?>
+                            <div class="text-sm text-slate-400">Для этого гостя ещё не было manual retention-запусков.</div>
+                        <?php else: ?>
+                            <div class="space-y-2">
+                                <?php foreach ((array)$crmGuestProfile['retention_rows'] as $retRow): ?>
+                                    <?php
+                                    $retPayload = json_decode((string)($retRow['payload_json'] ?? '{}'), true);
+                                    if (!is_array($retPayload)) {
+                                        $retPayload = [];
+                                    }
+                                    $retOutcome = $crmGuestProfile['retention_outcomes'][(int)($retRow['id'] ?? 0)] ?? ['returned' => false];
+                                    ?>
+                                    <div class="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-[11px] text-slate-300">
+                                        <div class="flex items-start justify-between gap-2">
+                                            <div class="font-medium text-slate-100"><?= e((string)($retPayload['segment_label'] ?? $retPayload['draft_title'] ?? 'Manual return')) ?></div>
+                                            <span class="text-slate-500"><?= e($manualReturnStatusLabel((string)($retRow['status'] ?? ''))) ?></span>
+                                        </div>
+                                        <div class="text-slate-500 mt-1"><?= e((string)($retRow['created_at'] ?? '')) ?><?php if (!empty($retPayload['template_name'])): ?> · шаблон <?= e((string)$retPayload['template_name']) ?><?php endif; ?></div>
+                                        <?php if (!empty($retOutcome['returned'])): ?>
+                                            <div class="text-emerald-200 mt-1">Вернулся: заказ #<?= (int)($retOutcome['return_order_id'] ?? 0) ?> · <?= e(number_format((float)($retOutcome['return_order_total'] ?? 0), 0, '.', ' ')) ?> ₽</div>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </section>
+            <?php endif; ?>
+
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                <section class="rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 to-slate-900/50 p-5 space-y-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <div class="text-xs uppercase tracking-wide text-emerald-300/80">Кого возвращать в первую очередь</div>
+                            <h2 class="text-base font-bold text-white mt-1">Приоритетная очередь гостей</h2>
+                        </div>
+                        <a href="#loyalty-scenarios" class="text-[11px] text-emerald-300 hover:text-emerald-200 font-medium">Открыть сценарии</a>
+                    </div>
+                    <p class="text-xs text-slate-500">Очередь собирается из loyalty-сценариев по paid visits, бонусному балансу и ценности гостя. Это быстрый ответ, кому стоит написать в первую очередь.</p>
+                    <?php if ($retentionPriorityQueue === []): ?>
+                        <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-6 text-center">
+                            <div class="text-sm font-medium text-slate-200">Сейчас нет явных кандидатов на возврат</div>
+                            <div class="text-xs text-slate-500 mt-2">Когда появятся loyalty-сегменты с подтверждёнными paid visits и балансом, здесь сформируется приоритетная очередь.</div>
+                        </div>
+                    <?php else: ?>
+                        <div class="space-y-3">
+                            <?php foreach ($retentionPriorityQueue as $candidate): ?>
+                                <?php
+                                $candidateGuestId = (int)($candidate['crm_guest_id'] ?? 0);
+                                $candidatePhone = trim((string)($candidate['phone'] ?? ''));
+                                $candidateLabel = trim((string)($candidate['segment_label'] ?? $candidate['label'] ?? $candidate['segment_type'] ?? 'Сценарий'));
+                                $candidateReason = trim((string)($candidate['reason_text'] ?? $candidate['description'] ?? ''));
+                                $candidateBalance = (int)($candidate['loyalty_balance'] ?? 0);
+                                $candidateDays = (int)($candidate['days_since_paid_visit'] ?? 0);
+                                $candidateVisits = (int)($candidate['visits_count'] ?? 0);
+                                $candidateAvgCheck = (float)($candidate['avg_check'] ?? 0);
+                                $candidateScore = (int)($candidate['priority_score'] ?? 0);
+                                $candidateTemplateKey = trim((string)($candidate['recommended_template_key'] ?? ''));
+                                $candidateTemplateName = trim((string)($candidate['recommended_template_name'] ?? ''));
+                                $candidateHasSameDraft = !empty($candidate['has_existing_draft_for_same_segment']);
+                                $candidateHasBlockingDraft = !empty($candidate['has_any_existing_blocking_draft']);
+                                $candidateOutboxId = (int)($candidate['existing_outbox_id'] ?? 0);
+                                $candidateOutboxStatus = $manualReturnStatusLabel((string)($candidate['existing_outbox_status'] ?? ''));
+                                $candidateOutboxSegment = trim((string)($candidate['existing_outbox_segment_label'] ?? $candidate['existing_outbox_segment_type'] ?? ''));
+                                $candidateOutboxTemplate = trim((string)($candidate['existing_outbox_template_name'] ?? ''));
+                                $candidateCanCreate = !empty($candidate['can_one_click_create']);
+                                $candidateFeedbackHasDraft = !empty($candidate['feedback_has_same_segment_draft']);
+                                $candidateFeedbackReturned = !empty($candidate['feedback_returned']);
+                                $candidateFeedbackStatus = $manualReturnStatusLabel((string)($candidate['feedback_outbox_status'] ?? ''));
+                                $candidateFeedbackDraftAt = trim((string)($candidate['feedback_outbox_created_at'] ?? ''));
+                                $candidateFeedbackTemplate = trim((string)($candidate['feedback_template_name'] ?? ''));
+                                $candidateFeedbackOrderId = (int)($candidate['feedback_return_order_id'] ?? 0);
+                                $candidateFeedbackOrderAt = trim((string)($candidate['feedback_return_order_created_at'] ?? ''));
+                                $candidateFeedbackOrderTotal = (float)($candidate['feedback_return_order_total'] ?? 0);
+                                $candidateFeedbackDays = $candidate['feedback_days_to_return'] ?? null;
+                                $queueOutboxLink = $crmQueryBase(['status' => 'draft']) . '#crm-outbox';
+                                ?>
+                                <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <div class="text-sm font-semibold text-slate-100"><?= e($candidatePhone !== '' ? $candidatePhone : ('CRM guest #' . $candidateGuestId)) ?></div>
+                                            <div class="text-[11px] text-emerald-300 mt-1"><?= e($candidateLabel) ?></div>
+                                        </div>
+                                        <span class="shrink-0 inline-flex items-center rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[11px] font-semibold text-emerald-200">Приоритет <?= $candidateScore ?></span>
+                                    </div>
+                                    <?php if ($candidateReason !== ''): ?>
+                                        <div class="text-xs text-slate-400 mt-2"><?= e($candidateReason) ?></div>
+                                    <?php endif; ?>
+                                    <div class="flex flex-wrap gap-2 mt-3 text-[11px]">
+                                        <span class="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/70 px-2 py-1 text-slate-300"><?= $candidateBalance ?> бонусов</span>
+                                        <span class="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/70 px-2 py-1 text-slate-300"><?= $candidateDays ?> дн. без paid visit</span>
+                                        <span class="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/70 px-2 py-1 text-slate-300"><?= $candidateVisits ?> paid visits</span>
+                                        <?php if ($candidateAvgCheck > 0): ?>
+                                            <span class="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/70 px-2 py-1 text-slate-300">ср. чек <?= e(number_format($candidateAvgCheck, 0, '.', ' ')) ?> ₽</span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 mt-3 text-[11px] text-slate-300">
+                                        <span class="text-slate-500">One-click сценарий:</span>
+                                        <span class="ml-1"><?= e($candidateLabel) ?></span>
+                                        <?php if ($candidateTemplateName !== ''): ?>
+                                            <span class="text-slate-500">· шаблон</span>
+                                            <span class="ml-1"><?= e($candidateTemplateName) ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <?php if ($candidateFeedbackHasDraft): ?>
+                                        <div class="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 mt-3 text-[11px] text-slate-300 space-y-2">
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span class="inline-flex items-center rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">Черновик создан</span>
+                                                <span class="inline-flex items-center rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] text-slate-300"><?= e($candidateFeedbackStatus) ?></span>
+                                                <?php if ($candidateFeedbackReturned): ?>
+                                                    <span class="inline-flex items-center rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200">Гость вернулся</span>
+                                                <?php endif; ?>
+                                            </div>
+                                            <div class="text-slate-400">
+                                                Сценарий уже запускался<?= $candidateFeedbackDraftAt !== '' ? ' · ' . e($candidateFeedbackDraftAt) : '' ?>
+                                                <?php if ($candidateFeedbackTemplate !== ''): ?> · шаблон <?= e($candidateFeedbackTemplate) ?><?php endif; ?>
+                                            </div>
+                                            <?php if ($candidateFeedbackReturned): ?>
+                                                <div class="text-emerald-200">
+                                                    После retention touch был confirmed paid order
+                                                    <?php if ($candidateFeedbackOrderId > 0): ?> #<?= $candidateFeedbackOrderId ?><?php endif; ?>
+                                                    <?php if ($candidateFeedbackOrderTotal > 0): ?> · <?= e(number_format($candidateFeedbackOrderTotal, 0, '.', ' ')) ?> ₽<?php endif; ?>
+                                                    <?php if ($candidateFeedbackOrderAt !== ''): ?> · <?= e($candidateFeedbackOrderAt) ?><?php endif; ?>
+                                                    <?php if ($candidateFeedbackDays !== null): ?> · вернулся через <?= e(number_format((float)$candidateFeedbackDays, 0, '.', ' ')) ?> дн.<?php endif; ?>
+                                                </div>
+                                            <?php else: ?>
+                                                <div class="text-slate-500">После этого сценария нового confirmed paid order пока не было.</div>
+                                            <?php endif; ?>
+                                        </div>
+                                    <?php endif; ?>
+                                    <div class="flex flex-wrap gap-2 mt-3">
+                                        <?php if ($candidateCanCreate): ?>
+                                            <form method="post" class="inline-flex">
+                                                <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
+                                                <input type="hidden" name="action" value="create_loyalty_retention_draft">
+                                                <input type="hidden" name="guest_id" value="<?= $candidateGuestId ?>">
+                                                <input type="hidden" name="segment_type" value="<?= e((string)($candidate['segment_type'] ?? '')) ?>">
+                                                <input type="hidden" name="template_key" value="<?= e($candidateTemplateKey) ?>">
+                                                <button type="submit" class="inline-flex items-center px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs text-white font-semibold">Создать черновик</button>
+                                            </form>
+                                        <?php elseif ($candidateHasSameDraft): ?>
+                                            <a href="<?= e($queueOutboxLink) ?>" class="inline-flex items-center px-3 py-1.5 rounded-lg bg-violet-500/15 border border-violet-500/30 text-xs text-violet-200 font-semibold">Черновик уже есть</a>
+                                        <?php elseif ($candidateHasBlockingDraft): ?>
+                                            <a href="<?= e($queueOutboxLink) ?>" class="inline-flex items-center px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-xs text-amber-200 font-semibold">У гостя уже есть другой draft</a>
+                                        <?php endif; ?>
+                                        <a href="<?= e($crmQueryBase(['profile' => $candidateGuestId])) ?>#crm-guest-profile" class="inline-flex items-center px-3 py-1.5 rounded-lg bg-sky-600/80 hover:bg-sky-500 text-xs text-white font-semibold">Профиль гостя</a>
+                                        <a href="<?= e($crmQueryBase(['history' => $candidateGuestId])) ?>#guests-base" class="inline-flex items-center px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-medium">История гостя</a>
+                                        <a href="<?= e($crmQueryBase(['compose' => $candidateGuestId])) ?>#crm-compose" class="inline-flex items-center px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-medium">Открыть ручное сообщение</a>
+                                    </div>
+                                    <?php if ($candidateHasBlockingDraft): ?>
+                                        <div class="text-[11px] text-slate-500 mt-3">
+                                            Уже есть retention-запуск:
+                                            <span class="text-slate-300"><?= e($candidateOutboxStatus) ?></span>
+                                            <?php if ($candidateOutboxSegment !== ''): ?> · <?= e($candidateOutboxSegment) ?><?php endif; ?>
+                                            <?php if ($candidateOutboxTemplate !== ''): ?> · шаблон <?= e($candidateOutboxTemplate) ?><?php endif; ?>
+                                            <?php if ($candidateOutboxId > 0): ?> · запись #<?= $candidateOutboxId ?><?php endif; ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </section>
+
+                <section class="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/5 to-slate-900/50 p-5 space-y-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <div class="text-xs uppercase tracking-wide text-cyan-300/80">Что уже запущено сейчас</div>
+                            <h2 class="text-base font-bold text-white mt-1">Черновики, ручная отправка и кампании</h2>
+                        </div>
+                        <a href="<?= e($crmQueryBase(['status' => 'draft'])) ?>#crm-outbox" class="text-[11px] text-cyan-300 hover:text-cyan-200 font-medium">Открыть outbox</a>
+                    </div>
+                    <p class="text-xs text-slate-500">Этот блок замыкает ежедневную работу: видно, сколько loyalty-черновиков уже подготовлено, что ждёт ручной отправки и есть ли активные CRM-кампании.</p>
+                    <div class="grid grid-cols-2 gap-2 text-[11px]">
+                        <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                            <div class="text-slate-500 uppercase tracking-wide">Черновики</div>
+                            <div class="text-xl font-bold text-cyan-300 mt-1"><?= (int)($manualReturnOutboxSummary['draft'] ?? 0) ?></div>
+                        </div>
+                        <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                            <div class="text-slate-500 uppercase tracking-wide">Готово к отправке</div>
+                            <div class="text-xl font-bold text-white mt-1"><?= (int)($manualReturnOutboxSummary['ready_manual'] ?? 0) ?></div>
+                        </div>
+                        <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                            <div class="text-slate-500 uppercase tracking-wide">Loyalty-drafts</div>
+                            <div class="text-xl font-bold text-emerald-300 mt-1"><?= (int)($manualReturnOutboxSummary['loyalty_rows'] ?? 0) ?></div>
+                        </div>
+                        <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                            <div class="text-slate-500 uppercase tracking-wide">Активные кампании</div>
+                            <div class="text-xl font-bold text-violet-300 mt-1"><?= $activeCampaignsCount ?></div>
+                        </div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3 space-y-2">
+                        <div class="text-xs font-semibold text-slate-200">Последние retention-запуски</div>
+                        <?php if (($manualReturnOutboxSummary['recent'] ?? []) === []): ?>
+                            <div class="text-xs text-slate-500">За последние 30 дней ещё не было retention-черновиков. Начните со сценариев ниже — новые записи появятся здесь автоматически.</div>
+                        <?php else: ?>
+                            <div class="space-y-2">
+                                <?php foreach ($manualReturnOutboxSummary['recent'] as $outboxRow): ?>
+                                    <?php
+                                    $outboxPhone = trim((string)($outboxRow['phone'] ?? ''));
+                                    $outboxSegment = trim((string)($outboxRow['segment_label'] ?? $outboxRow['draft_title'] ?? 'Manual draft'));
+                                    $outboxTemplate = trim((string)($outboxRow['template_name'] ?? ''));
+                                    $outboxStatus = $manualReturnStatusLabel((string)($outboxRow['status'] ?? ''));
+                                    ?>
+                                    <div class="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
+                                        <div class="flex items-start justify-between gap-3">
+                                            <div>
+                                                <div class="text-xs font-medium text-slate-100"><?= e($outboxPhone !== '' ? $outboxPhone : 'Без телефона') ?></div>
+                                                <div class="text-[11px] text-slate-500 mt-1"><?= e($outboxSegment) ?></div>
+                                            </div>
+                                            <span class="shrink-0 inline-flex items-center rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-[10px] text-slate-300"><?= e($outboxStatus) ?></span>
+                                        </div>
+                                        <div class="text-[11px] text-slate-500 mt-2">
+                                            <?= !empty($outboxRow['is_loyalty']) ? 'Loyalty-сценарий' : 'Fallback/manual' ?>
+                                            · <?= e((string)($outboxRow['created_at'] ?? '')) ?>
+                                            <?php if ($outboxTemplate !== ''): ?> · шаблон <?= e($outboxTemplate) ?><?php endif; ?>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </section>
+
+                <section class="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-violet-500/5 to-slate-900/50 p-5 space-y-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <div class="text-xs uppercase tracking-wide text-violet-300/80">Что реально сработало</div>
+                            <h2 class="text-base font-bold text-white mt-1">Лучшие loyalty-сценарии по возврату</h2>
+                        </div>
+                        <a href="#loyalty-analytics" class="text-[11px] text-violet-300 hover:text-violet-200 font-medium">К полной аналитике</a>
+                    </div>
+                    <p class="text-xs text-slate-500">V1.2 замыкает цикл: после запуска draft’ов ресторан сразу видит, какой сценарий вернул paid visits и дал повторную выручку.</p>
+                    <?php if ($bestScenarioStats === []): ?>
+                        <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-6 text-center">
+                            <div class="text-sm font-medium text-slate-200">Пока нет накопленной analytics по loyalty-сценариям</div>
+                            <div class="text-xs text-slate-500 mt-2">Когда вы начнёте создавать черновики и появятся новые paid orders после них, этот блок покажет самые результативные сценарии.</div>
+                        </div>
+                    <?php else: ?>
+                        <div class="space-y-3">
+                            <?php foreach ($bestScenarioStats as $scenarioStat): ?>
+                                <?php
+                                $statLabel = trim((string)($scenarioStat['segment_label'] ?? $scenarioStat['label'] ?? $scenarioStat['segment_type'] ?? 'Сценарий'));
+                                $statReturnedGuests = (int)($scenarioStat['returned_guests'] ?? 0);
+                                $statReturnedRevenue = (float)($scenarioStat['returned_revenue'] ?? 0);
+                                $statReturnRate = (float)($scenarioStat['return_rate'] ?? 0);
+                                $statAvgDays = $scenarioStat['avg_days_to_return'] ?? null;
+                                ?>
+                                <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <div class="text-sm font-semibold text-slate-100"><?= e($statLabel) ?></div>
+                                            <div class="text-[11px] text-slate-500 mt-1"><?= (int)($scenarioStat['drafts_created'] ?? 0) ?> черновиков · <?= (int)($scenarioStat['unique_guests_targeted'] ?? 0) ?> гостей в работе</div>
+                                        </div>
+                                        <span class="shrink-0 inline-flex items-center rounded-lg border border-violet-500/20 bg-violet-500/10 px-2 py-1 text-[11px] font-semibold text-violet-200"><?= e(number_format($statReturnedRevenue, 0, '.', ' ')) ?> ₽</span>
+                                    </div>
+                                    <div class="flex flex-wrap gap-2 mt-3 text-[11px]">
+                                        <span class="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/70 px-2 py-1 text-slate-300">вернулось гостей: <?= $statReturnedGuests ?></span>
+                                        <span class="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/70 px-2 py-1 text-slate-300">доля возврата: <?= e(number_format($statReturnRate * 100, 1, '.', ' ')) ?>%</span>
+                                        <?php if ($statAvgDays !== null): ?>
+                                            <span class="inline-flex items-center rounded-lg border border-slate-700 bg-slate-900/70 px-2 py-1 text-slate-300">ср. возврат: <?= e(number_format((float)$statAvgDays, 1, '.', ' ')) ?> дн.</span>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </section>
+            </div>
+
             <?php if (!$crmGuestReturnEnabled): ?>
             <div class="rounded-2xl border border-slate-700 bg-slate-900/50 px-4 py-5 text-sm text-slate-400">
                 <p class="font-medium text-slate-200">Возврат гостей выключен</p>
-                <p class="text-xs text-slate-500 mt-2 max-w-xl">Блок «Готовы к возврату» и массовые черновики по неактивным скрыты. База гостей и ручная подготовка сообщений ниже доступны.</p>
+                <p class="text-xs text-slate-500 mt-2 max-w-xl">Автоматизированные loyalty-сценарии и быстрые черновики скрыты. База гостей, ручные сообщения и CRM-история ниже остаются доступными.</p>
                 <a href="/restaurant/settings.php#crm-return-settings" class="inline-flex mt-3 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold">Открыть настройки CRM</a>
             </div>
             <?php endif; ?>
@@ -666,10 +1453,9 @@ foreach ($inactiveReturnGuests as $_ir) {
             <div class="rounded-2xl border border-amber-500/25 bg-gradient-to-br from-amber-500/5 to-slate-900/40 p-5 md:p-6 space-y-4">
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                     <div>
-                        <h2 class="text-lg font-bold text-white">Готовы к возврату</h2>
+                        <h2 class="text-lg font-bold text-white">Быстрый возврат неактивных гостей</h2>
                         <p class="text-xs text-slate-500 mt-1 max-w-xl">
-                            Гости в сегменте «давно не были» (нет визита <?= (int)$inactiveThresholdDays ?>+ дн.), с телефоном.
-                            Черновик попадает в <code class="text-slate-400">crm_outbox</code> со статусом «черновик» — без авто-отправки.
+                            Это простой fallback-сценарий для гостей без визита <?= (int)$inactiveThresholdDays ?>+ дн. Если нужен более точный loyalty-подход, используйте готовые loyalty-сценарии ниже.
                         </p>
                     </div>
                     <?php if (!is_demo_mode() && $inactiveReturnEligibleCount > 0): ?>
@@ -788,6 +1574,229 @@ foreach ($inactiveReturnGuests as $_ir) {
             </div>
             <?php endif; ?>
 
+            <?php if ($loyaltyRetentionScenarios !== []): ?>
+            <div id="loyalty-scenarios" class="rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 to-slate-900/40 p-5 md:p-6 space-y-4">
+                <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                    <div>
+                        <h2 class="text-lg font-bold text-white">1. Готовые loyalty-сценарии и кандидаты</h2>
+                        <p class="text-xs text-slate-500 mt-1 max-w-2xl">Это основной рабочий блок loyalty CRM. Здесь видно, кому подходит сценарий, зачем его запускать, какой текст уйдёт в черновик и каких гостей можно вернуть прямо сейчас.</p>
+                    </div>
+                    <a href="/restaurant/crm_campaigns.php" class="inline-flex items-center px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold">К loyalty-кампаниям</a>
+                </div>
+
+                <?php if ($loyaltyTemplateLibrary !== []): ?>
+                <div class="rounded-xl border border-slate-800 bg-slate-950/50 p-4 space-y-3">
+                    <div class="text-sm font-semibold text-slate-100">Библиотека retention-шаблонов</div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                        <?php foreach ($loyaltyTemplateLibrary as $templateKey => $templateCfg): ?>
+                            <div class="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-3">
+                                <div class="text-sm font-medium text-slate-100"><?= e((string)($templateCfg['name'] ?? $templateKey)) ?></div>
+                                <div class="text-[11px] text-slate-500 mt-1"><?= e((string)($templateCfg['purpose'] ?? '')) ?></div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+
+                <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <?php foreach ($loyaltyRetentionScenarios as $segmentType => $scenario): ?>
+                        <?php
+                        $scenarioCount = (int)($scenario['count'] ?? 0);
+                        $candidates = is_array($scenario['candidates'] ?? null) ? $scenario['candidates'] : [];
+                        ?>
+                        <div class="rounded-xl border border-slate-800 bg-slate-950/50 p-4 space-y-3">
+                            <div class="flex items-start justify-between gap-3">
+                                <div>
+                                    <div class="text-sm font-semibold text-slate-100"><?= e((string)($scenario['label'] ?? $segmentType)) ?></div>
+                                    <div class="text-xs text-slate-500 mt-1"><?= e((string)($scenario['description'] ?? '')) ?></div>
+                                </div>
+                                <span class="shrink-0 inline-flex items-center rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 text-xs font-semibold text-emerald-200"><?= $scenarioCount ?></span>
+                            </div>
+
+                            <div class="grid grid-cols-1 gap-2 text-[11px]">
+                                <?php if (!empty($scenario['who'])): ?>
+                                    <div class="rounded-lg bg-slate-900/60 border border-slate-800 px-3 py-2 text-slate-300">
+                                        <span class="text-slate-500">Кому подходит:</span>
+                                        <span class="ml-1"><?= e((string)$scenario['who']) ?></span>
+                                    </div>
+                                <?php endif; ?>
+                                <?php if (!empty($scenario['goal'])): ?>
+                                    <div class="rounded-lg bg-slate-900/60 border border-slate-800 px-3 py-2 text-slate-300">
+                                        <span class="text-slate-500">Зачем запускать:</span>
+                                        <span class="ml-1"><?= e((string)$scenario['goal']) ?></span>
+                                    </div>
+                                <?php endif; ?>
+                                <?php if (!empty($scenario['offer_framing'])): ?>
+                                    <div class="rounded-lg bg-slate-900/60 border border-slate-800 px-3 py-2 text-slate-300">
+                                        <span class="text-slate-500">Как подать оффер:</span>
+                                        <span class="ml-1"><?= e((string)$scenario['offer_framing']) ?></span>
+                                    </div>
+                                <?php endif; ?>
+                                <?php if (!empty($scenario['recommended_template_key']) && isset($loyaltyTemplateLibrary[$scenario['recommended_template_key']])): ?>
+                                    <div class="rounded-lg bg-slate-900/60 border border-slate-800 px-3 py-2 text-slate-300">
+                                        <span class="text-slate-500">Рекомендуемый шаблон:</span>
+                                        <span class="ml-1"><?= e((string)($loyaltyTemplateLibrary[$scenario['recommended_template_key']]['name'] ?? $scenario['recommended_template_key'])) ?></span>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+
+                            <?php if ($scenarioCount > 0 && !is_demo_mode()): ?>
+                                <form method="post" class="space-y-2">
+                                    <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
+                                    <input type="hidden" name="action" value="bulk_loyalty_retention_drafts">
+                                    <input type="hidden" name="segment_type" value="<?= e($segmentType) ?>">
+                                    <?php if ($loyaltyTemplateLibrary !== []): ?>
+                                    <div>
+                                        <label class="block text-[11px] text-slate-500 mb-1">Шаблон для массового черновика</label>
+                                        <select name="template_key" class="w-full rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-slate-100">
+                                            <?php foreach ($loyaltyTemplateLibrary as $templateKey => $templateCfg): ?>
+                                                <option value="<?= e($templateKey) ?>" <?= (($scenario['recommended_template_key'] ?? '') === $templateKey) ? 'selected' : '' ?>><?= e((string)($templateCfg['name'] ?? $templateKey)) ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <?php endif; ?>
+                                    <div class="flex justify-end">
+                                        <button type="submit" class="px-3 py-2 rounded-xl bg-emerald-600/80 hover:bg-emerald-500 text-white text-xs font-semibold">Сформировать черновики всем подходящим</button>
+                                    </div>
+                                </form>
+                            <?php endif; ?>
+
+                            <?php if ($candidates === []): ?>
+                                <div class="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-5 text-center">
+                                    <div class="text-sm text-slate-400">Сейчас подходящих гостей нет</div>
+                                    <div class="text-[11px] text-slate-600 mt-2">Как только появятся гости с нужным паттерном визитов и бонусов, они появятся в этом сценарии.</div>
+                                </div>
+                            <?php else: ?>
+                                <div class="space-y-3">
+                                    <?php foreach ($candidates as $cand): ?>
+                                        <?php
+                                        $gid = (int)($cand['crm_guest_id'] ?? 0);
+                                        $days = (int)($cand['days_since_paid_visit'] ?? 0);
+                                        $balance = (int)($cand['loyalty_balance'] ?? 0);
+                                        $visits = (int)($cand['visits_count'] ?? 0);
+                                        $avg = (float)($cand['avg_check'] ?? 0);
+                                        $totalSpent = (float)($cand['total_spent'] ?? 0);
+                                        $lastSpend = trim((string)($cand['last_bonus_spend_at'] ?? ''));
+                                        ?>
+                                        <div class="rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3 space-y-2">
+                                            <div class="flex flex-wrap items-start justify-between gap-2">
+                                                <div>
+                                                    <div class="text-sm font-medium text-slate-100"><?= e((string)($cand['phone'] ?? '')) ?></div>
+                                                    <div class="text-[11px] text-slate-500 mt-1"><?= e((string)($cand['reason_text'] ?? '')) ?></div>
+                                                </div>
+                                                <div class="text-right text-[11px] text-slate-400">
+                                                    <div>Баланс: <span class="text-emerald-300 font-semibold"><?= $balance ?></span></div>
+                                                    <div>Визиты: <?= $visits ?></div>
+                                                </div>
+                                            </div>
+                                            <div class="text-[11px] text-slate-500">
+                                                <?= $days > 0 ? ('Последний paid визит: ' . $days . ' дн. назад') : 'Последний paid визит: недавно' ?>
+                                                <?php if ($avg > 0): ?> · Ср. чек <?= e(number_format($avg, 0, '.', ' ')) ?> ₽<?php endif; ?>
+                                                <?php if ($totalSpent > 0): ?> · Всего <?= e(number_format($totalSpent, 0, '.', ' ')) ?> ₽<?php endif; ?>
+                                                <?php if ($lastSpend !== ''): ?> · Последнее списание <?= e(date('d.m.Y', strtotime($lastSpend))) ?><?php endif; ?>
+                                            </div>
+                                            <?php if (!empty($cand['recommended_template_name'])): ?>
+                                                <div class="text-[11px] text-slate-500">По умолчанию: <?= e((string)$cand['recommended_template_name']) ?></div>
+                                            <?php endif; ?>
+                                            <?php if (!empty($cand['draft_title'])): ?>
+                                                <div class="text-[11px] text-emerald-300 font-medium">Черновик: <?= e((string)$cand['draft_title']) ?></div>
+                                            <?php endif; ?>
+                                            <div class="rounded-lg bg-slate-950/70 px-3 py-2 text-xs text-slate-300 leading-relaxed">
+                                                <div class="text-[11px] uppercase tracking-wide text-slate-500 mb-1">Рекомендуемый текст сообщения</div>
+                                                <?= e((string)($cand['message_text'] ?? '')) ?>
+                                            </div>
+                                            <?php if (!empty($cand['scenario_offer_framing'])): ?>
+                                                <div class="text-[11px] text-slate-500">Рекомендуемая подача: <?= e((string)$cand['scenario_offer_framing']) ?></div>
+                                            <?php endif; ?>
+                                            <div class="flex flex-wrap gap-2">
+                                                <a href="<?= e($crmQueryBase(['profile' => $gid, 'history' => null, 'compose' => null])) ?>#crm-guest-profile" class="px-3 py-2 rounded-xl bg-sky-600/80 hover:bg-sky-500 text-white text-xs font-semibold">Профиль гостя</a>
+                                                <?php if (!is_demo_mode()): ?>
+                                                    <form method="post" class="space-y-2">
+                                                        <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
+                                                        <input type="hidden" name="action" value="create_loyalty_retention_draft">
+                                                        <input type="hidden" name="segment_type" value="<?= e($segmentType) ?>">
+                                                        <input type="hidden" name="guest_id" value="<?= $gid ?>">
+                                                        <?php if (!empty($cand['template_options']) && is_array($cand['template_options'])): ?>
+                                                            <div>
+                                                                <label class="block text-[11px] text-slate-500 mb-1">Шаблон для этого гостя</label>
+                                                                <select name="template_key" class="w-full rounded-xl bg-slate-950 border border-slate-700 px-3 py-2 text-xs text-slate-100 min-w-[220px]">
+                                                                    <?php foreach ($cand['template_options'] as $templateKey => $templateCfg): ?>
+                                                                        <option value="<?= e((string)$templateKey) ?>" <?= (($cand['recommended_template_key'] ?? '') === $templateKey) ? 'selected' : '' ?>><?= e((string)($templateCfg['name'] ?? $templateKey)) ?></option>
+                                                                    <?php endforeach; ?>
+                                                                </select>
+                                                            </div>
+                                                        <?php endif; ?>
+                                                        <button type="submit" class="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold">Создать черновик</button>
+                                                    </form>
+                                                <?php endif; ?>
+                                                <a href="<?= e($crmQueryBase(['history' => $gid, 'compose' => null])) ?>#guests-return" class="px-3 py-2 rounded-xl bg-slate-800 text-slate-200 text-xs font-medium">История</a>
+                                                <a href="<?= e($crmQueryBase(['compose' => $gid, 'history' => null])) ?>#guests-return" class="px-3 py-2 rounded-xl bg-slate-800 text-slate-200 text-xs font-medium">Сообщение вручную</a>
+                                            </div>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+            <?php endif; ?>
+
+            <?php if ($loyaltyScenarioAnalytics !== []): ?>
+            <div id="loyalty-analytics" class="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/5 to-slate-900/40 p-5 md:p-6 space-y-4">
+                <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                    <div>
+                        <h2 class="text-lg font-bold text-white">3. Что реально работает</h2>
+                        <p class="text-xs text-slate-500 mt-1 max-w-2xl">Здесь видно, какие loyalty-сценарии дают не только черновики, но и реальные confirmed paid возвраты. Аналитика считается по первому paid order после создания черновика.</p>
+                    </div>
+                    <div class="text-[11px] text-cyan-300">Модель attribution: первый confirmed paid order после черновика</div>
+                </div>
+
+                <?php if ($loyaltyScenarioDraftsTotal <= 0): ?>
+                <div class="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-8 text-center">
+                    <div class="text-sm text-slate-400">Аналитика loyalty-сценариев появится после первых черновиков</div>
+                    <div class="text-[11px] text-slate-600 mt-2">Сначала создайте хотя бы один loyalty-черновик выше. После этого блок начнёт считать возвраты и выручку.</div>
+                </div>
+                <?php else: ?>
+                <div class="overflow-x-auto rounded-xl border border-slate-800">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-slate-500 border-b border-slate-800">
+                                <th class="p-3">Сценарий</th>
+                                <th class="p-3">Черновики</th>
+                                <th class="p-3">Гости</th>
+                                <th class="p-3">Вернулось</th>
+                                <th class="p-3">Return rate</th>
+                                <th class="p-3">Заказы</th>
+                                <th class="p-3">Выручка</th>
+                                <th class="p-3">Ср. время</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($loyaltyScenarioAnalytics as $segmentType => $stat): ?>
+                                <tr class="border-b border-slate-800/80">
+                                    <td class="p-3">
+                                        <div class="text-slate-100 font-medium"><?= e((string)($stat['label'] ?? $segmentType)) ?></div>
+                                        <div class="text-[11px] text-slate-500"><?= e((string)($loyaltySegmentCatalog[$segmentType]['description'] ?? '')) ?></div>
+                                    </td>
+                                    <td class="p-3 text-slate-300"><?= (int)($stat['drafts_created'] ?? 0) ?></td>
+                                    <td class="p-3 text-slate-300"><?= (int)($stat['unique_guests_targeted'] ?? 0) ?></td>
+                                    <td class="p-3 text-slate-300"><?= (int)($stat['returned_guests'] ?? 0) ?></td>
+                                    <td class="p-3 text-emerald-300 font-medium"><?= e(number_format(((float)($stat['return_rate'] ?? 0)) * 100, 1, '.', ' ')) ?>%</td>
+                                    <td class="p-3 text-slate-300"><?= (int)($stat['paid_orders_after_draft'] ?? 0) ?></td>
+                                    <td class="p-3 text-slate-100"><?= e(number_format((float)($stat['returned_revenue'] ?? 0), 0, '.', ' ')) ?> ₽</td>
+                                    <td class="p-3 text-slate-400">
+                                        <?= ($stat['avg_days_to_return'] ?? null) !== null ? e(number_format((float)$stat['avg_days_to_return'], 1, '.', ' ')) . ' дн.' : '—' ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
                 <div class="rounded-xl bg-[#111827] border border-slate-700/80 p-4">
                     <div class="text-[11px] text-slate-500 uppercase tracking-wide">Всего гостей</div>
@@ -812,7 +1821,7 @@ foreach ($inactiveReturnGuests as $_ir) {
                 <div class="rounded-xl bg-[#111827] border border-slate-700/80 p-4">
                     <div class="text-[11px] text-slate-500 uppercase tracking-wide">Средний чек*</div>
                     <div class="text-2xl font-bold text-white mt-1"><?= $crmGuestStats['avg_check_global'] !== null ? e((string)$crmGuestStats['avg_check_global']) . ' ₽' : '—' ?></div>
-                    <div class="text-[10px] text-slate-600 mt-1">*по оплаченным заказам с guest_id</div>
+                    <div class="text-[10px] text-slate-600 mt-1">*по оплаченным заказам с CRM-привязкой гостя</div>
                 </div>
             </div>
 
@@ -943,7 +1952,7 @@ foreach ($inactiveReturnGuests as $_ir) {
             <?php if ($crmGuestsFiltered === []): ?>
                 <div class="rounded-2xl border border-dashed border-slate-600/50 bg-[#111827]/40 px-6 py-14 text-center space-y-3">
                     <h3 class="text-lg font-bold text-white">Гостей пока нет</h3>
-                    <p class="text-sm text-slate-500 max-w-md mx-auto">Когда гости оставят телефон в заказе (и будет согласие), они появятся в CRM. Заказы с привязкой guest_id дадут суммы и историю.</p>
+                    <p class="text-sm text-slate-500 max-w-md mx-auto">Когда гости оставят телефон в заказе (и будет согласие), они появятся в CRM. Заказы с CRM-привязкой гостя дадут суммы и историю.</p>
                 </div>
             <?php else: ?>
                 <div class="hidden md:block overflow-x-auto rounded-xl border border-slate-800">
@@ -1012,10 +2021,20 @@ foreach ($inactiveReturnGuests as $_ir) {
             <?php endif; ?>
         </section>
 
+        <section id="crm-secondary-tools" class="section reveal rounded-2xl border border-slate-800/80 bg-slate-900/40 p-5">
+            <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-bold text-white">4. Дополнительные CRM инструменты</h2>
+                    <p class="text-xs text-slate-500 mt-1 max-w-2xl">Ниже остаются вспомогательные блоки: идеи из отзывов, feedback->upsell черновики и старые comeback widgets. Они дополняют основной loyalty CRM flow, но не заменяют его.</p>
+                </div>
+                <a href="#crm-outbox" class="inline-flex items-center px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold">Перейти к исходящим</a>
+            </div>
+        </section>
+
         <?php if (!is_demo_mode()): ?>
         <section id="feedback-suggestions" class="section reveal dashboard-card card-motion bg-slate-900/80 border border-slate-800 rounded-3xl p-4">
-            <h3 class="text-lg font-semibold text-slate-100 mb-2">Suggestions from feedback</h3>
-            <p class="text-xs text-slate-500 mb-4">Черновики на основе отзывов гостей. Авто-отправка отключена.</p>
+            <h3 class="text-lg font-semibold text-slate-100 mb-2">Сценарии возврата из отзывов</h3>
+            <p class="text-xs text-slate-500 mb-4">Дополнительный источник идей: черновики на основе отзывов гостей. Авто-отправка отключена.</p>
             <?php if (empty($feedbackBasedSuggestionsPreview)): ?>
                 <div class="text-sm text-slate-500">Нет новых предложений по отзывам.</div>
             <?php else: ?>
@@ -1053,7 +2072,7 @@ foreach ($inactiveReturnGuests as $_ir) {
                     </button>
                 </form>
                 <?php else: ?>
-                <p class="mt-4 text-right text-xs text-slate-500">CRM доступен на тарифе GROWTH. <a href="/owner/billing.php" class="text-amber-400 hover:underline">Перейти на тариф</a></p>
+                <p class="mt-4 text-right text-xs text-slate-500">CRM доступен на тарифе GROWTH. <a href="/restaurant/activate.php?plan=growth" class="text-amber-400 hover:underline">Открыть тариф</a></p>
                 <?php endif; ?>
             <?php endif; ?>
         </section>
@@ -1061,8 +2080,8 @@ foreach ($inactiveReturnGuests as $_ir) {
 
         <?php if (!empty($feedbackUpsellCrmDrafts)): ?>
         <section id="feedback-upsell-drafts" class="section reveal dashboard-card card-motion bg-slate-900/80 border border-slate-800 rounded-3xl p-4">
-            <h3 class="text-lg font-semibold text-slate-100 mb-2">CRM draft: feedback->upsell offers</h3>
-            <p class="text-xs text-slate-500 mb-4">Черновики CRM, созданные после принятия upsell-предложений из отзывов (без авто-отправки).</p>
+            <h3 class="text-lg font-semibold text-slate-100 mb-2">Черновики из отзывов и upsell</h3>
+            <p class="text-xs text-slate-500 mb-4">CRM-черновики, созданные после принятия upsell-предложений из отзывов. Это вспомогательный поток, не основной loyalty retention.</p>
             <ul class="space-y-3">
                 <?php foreach (array_slice($feedbackUpsellCrmDrafts, 0, 10) as $d): ?>
                     <?php
@@ -1158,8 +2177,8 @@ foreach ($inactiveReturnGuests as $_ir) {
 
         <?php if (!empty($retentionSuggestions)): ?>
         <section class="section reveal dashboard-card card-motion bg-slate-900/80 border border-slate-800 rounded-3xl p-4">
-            <h3 class="text-lg font-semibold text-slate-100 mb-2">Guest return opportunities</h3>
-            <p class="text-xs text-slate-500 mb-4">Guests who haven’t visited in 14+ days. Send a comeback offer to bring them back.</p>
+            <h3 class="text-lg font-semibold text-slate-100 mb-2">Подсказки по возврату гостей</h3>
+            <p class="text-xs text-slate-500 mb-4">Ручные идеи для возврата гостей, которые давно не были. Используйте их как дополняющий инструмент рядом с loyalty-сценариями.</p>
             <ul class="space-y-3">
                 <?php foreach (array_slice($retentionSuggestions, 0, 8) as $g): ?>
                     <li class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm">
@@ -1176,12 +2195,12 @@ foreach ($inactiveReturnGuests as $_ir) {
                             <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
                             <input type="hidden" name="action" value="schedule_comeback">
                             <input type="hidden" name="guest_id" value="<?= (int)$g['id'] ?>">
-                            <button type="submit" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium btn-motion">Create comeback message</button>
+                            <button type="submit" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium btn-motion">Создать comeback-черновик</button>
                         </form>
                         <?php elseif (!$crmEnabled): ?>
-                        <span class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-500 text-xs cursor-not-allowed" title="CRM на тарифе GROWTH">Create comeback message</span>
+                        <span class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-500 text-xs cursor-not-allowed" title="CRM на тарифе GROWTH">Создать comeback-черновик</span>
                         <?php else: ?>
-                        <a href="/restaurant/crm_campaigns.php" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium btn-motion">Create comeback message</a>
+                        <a href="/restaurant/crm_campaigns.php" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium btn-motion">Создать comeback-черновик</a>
                         <?php endif; ?>
                     </li>
                 <?php endforeach; ?>
@@ -1191,9 +2210,9 @@ foreach ($inactiveReturnGuests as $_ir) {
 
         <?php if (!empty($guestSegments) || !empty($simpleRetentionOpps)): ?>
         <section class="section reveal dashboard-card card-motion bg-slate-900/80 border border-slate-800 rounded-3xl p-4">
-            <h3 class="text-lg font-semibold text-slate-100 mb-2">Retention opportunities</h3>
+            <h3 class="text-lg font-semibold text-slate-100 mb-2">Простые retention-возможности</h3>
             <p class="text-xs text-slate-500 mb-2">
-                Guests who have visited before but haven&apos;t been back recently. Use the draft message as a starting point for a manual CRM campaign.
+                Базовые подсказки по гостям, которые были раньше, но давно не возвращались. Используйте их как ручной fallback, если основной loyalty-сценарий не подходит.
             </p>
             <?php if (!empty($guestSegments)): ?>
             <div class="flex flex-wrap gap-3 mb-4 text-xs">
@@ -1240,11 +2259,11 @@ foreach ($inactiveReturnGuests as $_ir) {
                 <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
                 <input type="hidden" name="action" value="create_retention_drafts">
                 <button type="submit" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium btn-motion">
-                    Create CRM retention drafts
+                    Создать CRM-черновики
                 </button>
             </form>
             <?php else: ?>
-            <p class="mt-4 text-right text-xs text-slate-500">CRM доступен на тарифе GROWTH. <a href="/owner/billing.php" class="text-amber-400 hover:underline">Перейти на тариф</a></p>
+            <p class="mt-4 text-right text-xs text-slate-500">CRM доступен на тарифе GROWTH. <a href="/restaurant/activate.php?plan=growth" class="text-amber-400 hover:underline">Открыть тариф</a></p>
             <?php endif; ?>
             <?php endif; ?>
         </section>
@@ -1252,8 +2271,8 @@ foreach ($inactiveReturnGuests as $_ir) {
 
         <?php if (!empty($comebackCandidates)): ?>
         <section id="comeback-candidates" class="section reveal dashboard-card card-motion bg-slate-900/80 border border-slate-800 rounded-3xl p-4">
-            <h3 class="text-lg font-semibold text-slate-100 mb-2">High-value comeback candidates</h3>
-            <p class="text-xs text-slate-500 mb-4">Guests who have not returned in 14+ days (visits ≥ 2). Create a draft or retention suggestion — no auto-send.</p>
+            <h3 class="text-lg font-semibold text-slate-100 mb-2">Сильные кандидаты на возврат</h3>
+            <p class="text-xs text-slate-500 mb-4">Гости с потенциалом возврата по старому comeback-engine. Это дополнительный источник идей, без авто-отправки.</p>
             <ul class="space-y-3">
                 <?php foreach (array_slice($comebackCandidates, 0, 15) as $c): ?>
                     <li class="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm space-y-2">
@@ -1267,7 +2286,7 @@ foreach ($inactiveReturnGuests as $_ir) {
                             <div class="text-xs text-slate-400"><?= e($c['suggested_offer']) ?></div>
                         </div>
                         <div class="flex flex-wrap items-center gap-2">
-                            <button type="button" class="js-preview-message px-2 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs text-slate-200" data-message="<?= e($c['suggested_message']) ?>">Preview message</button>
+                            <button type="button" class="js-preview-message px-2 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs text-slate-200" data-message="<?= e($c['suggested_message']) ?>">Предпросмотр</button>
                             <?php if ($crmEnabled && !is_demo_mode()): ?>
                             <form method="post" class="inline">
                                 <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
@@ -1277,7 +2296,7 @@ foreach ($inactiveReturnGuests as $_ir) {
                                 <input type="hidden" name="suggested_offer" value="<?= e($c['suggested_offer']) ?>">
                                 <input type="hidden" name="suggested_message" value="<?= e($c['suggested_message']) ?>">
                                 <input type="hidden" name="score" value="<?= (int)$c['score'] ?>">
-                                <button type="submit" class="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs text-white">Create comeback draft</button>
+                                <button type="submit" class="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs text-white">Создать comeback-черновик</button>
                             </form>
                             <form method="post" class="inline">
                                 <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
@@ -1285,7 +2304,7 @@ foreach ($inactiveReturnGuests as $_ir) {
                                 <input type="hidden" name="guest_contact" value="<?= e($c['guest_contact']) ?>">
                                 <input type="hidden" name="guest_name" value="<?= e($c['guest_name'] ?? '') ?>">
                                 <input type="hidden" name="message" value="<?= e($c['suggested_message']) ?>">
-                                <button type="submit" class="px-2 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs text-slate-200">Create retention suggestion</button>
+                                <button type="submit" class="px-2 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs text-slate-200">Создать retention-черновик</button>
                             </form>
                             <?php elseif (!$crmEnabled): ?>
                             <span class="text-xs text-slate-500" title="CRM на тарифе GROWTH">Создание черновиков — на тарифе GROWTH</span>
@@ -1300,10 +2319,10 @@ foreach ($inactiveReturnGuests as $_ir) {
             <form method="post" class="mt-4 flex justify-end">
                 <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
                 <input type="hidden" name="action" value="create_guest_return_drafts">
-                <button type="submit" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium btn-motion">Create comeback drafts (batch)</button>
+                <button type="submit" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium btn-motion">Создать comeback-черновики пакетно</button>
             </form>
             <?php elseif (!$crmEnabled && count($comebackCandidates) > 0): ?>
-            <p class="mt-4 text-right text-xs text-slate-500">CRM доступен на тарифе GROWTH. <a href="/owner/billing.php" class="text-amber-400 hover:underline">Перейти на тариф</a></p>
+            <p class="mt-4 text-right text-xs text-slate-500">CRM доступен на тарифе GROWTH. <a href="/restaurant/activate.php?plan=growth" class="text-amber-400 hover:underline">Открыть тариф</a></p>
             <?php endif; ?>
         </section>
         <div id="preview-message-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
@@ -1328,9 +2347,193 @@ foreach ($inactiveReturnGuests as $_ir) {
         <?php endif; ?>
 
         <header id="crm-outbox" class="section reveal scroll-mt-24">
-            <h2 class="text-2xl font-bold mb-1">Исходящие сообщения</h2>
-            <p class="text-xs text-slate-500">Очередь и черновики (stub / manual — без авто-SMS и WhatsApp).</p>
+            <h2 class="text-2xl font-bold mb-1">2. Черновики и исходящие</h2>
+            <p class="text-xs text-slate-500">Это рабочая очередь CRM: здесь видно, что нужно отправить вручную сейчас, что ещё остаётся в черновиках и какие сообщения уже дали результат.</p>
         </header>
+
+        <section class="section reveal dashboard-card card-motion bg-slate-900/80 border border-slate-800 rounded-3xl p-4 md:p-5 space-y-4">
+            <div class="grid grid-cols-2 xl:grid-cols-5 gap-3">
+                <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                    <div class="text-[11px] uppercase tracking-wide text-slate-500">Нужно отправить сейчас</div>
+                    <div class="text-2xl font-bold text-amber-300 mt-1"><?= (int)($manualReturnOutboxSummary['ready_manual'] ?? 0) + (int)($manualReturnOutboxSummary['pending'] ?? 0) ?></div>
+                    <div class="text-[11px] text-slate-500 mt-1">Готовы к ручной отправке</div>
+                </div>
+                <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                    <div class="text-[11px] uppercase tracking-wide text-slate-500">Черновики</div>
+                    <div class="text-2xl font-bold text-cyan-300 mt-1"><?= (int)($manualReturnOutboxSummary['draft'] ?? 0) ?></div>
+                    <div class="text-[11px] text-slate-500 mt-1">Нужна проверка текста</div>
+                </div>
+                <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                    <div class="text-[11px] uppercase tracking-wide text-slate-500">Отправлено / обработано</div>
+                    <div class="text-2xl font-bold text-emerald-300 mt-1"><?= (int)($manualReturnOutboxSummary['processed'] ?? 0) ?></div>
+                    <div class="text-[11px] text-slate-500 mt-1">Уже отправлены или обработаны</div>
+                </div>
+                <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                    <div class="text-[11px] uppercase tracking-wide text-slate-500">Отменено / ошибка</div>
+                    <div class="text-2xl font-bold text-rose-300 mt-1"><?= (int)($manualReturnOutboxSummary['canceled'] ?? 0) + (int)($manualReturnOutboxSummary['failed'] ?? 0) ?></div>
+                    <div class="text-[11px] text-slate-500 mt-1">Не в работе</div>
+                </div>
+                <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                    <div class="text-[11px] uppercase tracking-wide text-slate-500">Loyalty-сценарии</div>
+                    <div class="text-2xl font-bold text-violet-300 mt-1"><?= (int)($manualReturnOutboxSummary['loyalty_rows'] ?? 0) ?></div>
+                    <div class="text-[11px] text-slate-500 mt-1">Из loyalty-сценариев</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                <div class="rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-500/5 to-slate-950/60 p-4 space-y-3">
+                    <div class="flex items-center justify-between gap-3">
+                        <div>
+                            <h3 class="text-sm font-semibold text-slate-100">Нужно отправить сейчас</h3>
+                            <p class="text-[11px] text-slate-500 mt-1">Сообщения, которые уже готовы к ручной отправке или висят в pending.</p>
+                        </div>
+                        <a href="<?= e($crmQueryBase(['status' => 'ready_manual'])) ?>#crm-outbox-table" class="text-[11px] text-amber-300 hover:text-amber-200 font-medium">Открыть список</a>
+                    </div>
+                    <?php if ($sendBoardReadyRows === []): ?>
+                        <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-6 text-center">
+                            <div class="text-sm font-medium text-slate-200">Сейчас нет сообщений к ручной отправке</div>
+                            <div class="text-[11px] text-slate-500 mt-2">Когда loyalty-сценарий дойдёт до `ready_manual` или `pending`, он появится здесь.</div>
+                        </div>
+                    <?php else: ?>
+                        <div class="space-y-3">
+                            <?php foreach ($sendBoardReadyRows as $boardRow): ?>
+                                <?php $board = $crmOutboxBoardMeta($boardRow); ?>
+                                <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3 space-y-2">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <div class="text-sm font-semibold text-slate-100"><?= e((string)($boardRow['phone'] ?? 'Без телефона')) ?></div>
+                                            <div class="text-[11px] text-slate-500 mt-1"><?= e($board['segment_label'] !== '' ? $board['segment_label'] : ($board['reason'] !== '' ? $board['reason'] : 'Manual return')) ?></div>
+                                        </div>
+                                        <span class="inline-flex items-center rounded-lg border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200"><?= e($board['status_ui']) ?></span>
+                                    </div>
+                                    <div class="text-xs text-slate-300 bg-slate-900/70 border border-slate-800 rounded-lg px-3 py-2 whitespace-pre-wrap break-words"><?= $board['message_text'] !== '' ? e($board['message_text']) : '—' ?></div>
+                                    <div class="text-[11px] text-slate-500">
+                                        <?= e((string)($boardRow['scheduled_at'] ?? '')) ?>
+                                        <?php if ($board['template_name'] !== ''): ?> · шаблон <?= e($board['template_name']) ?><?php endif; ?>
+                                    </div>
+                                    <?php if ($board['returned']): ?>
+                                        <div class="text-[11px] text-emerald-200">Гость уже вернулся: paid order #<?= $board['return_order_id'] ?> · <?= e(number_format((float)$board['return_order_total'], 0, '.', ' ')) ?> ₽</div>
+                                    <?php endif; ?>
+                                    <?php if ($crmEnabled || (($boardRow['template'] ?? '') === 'manual_return')): ?>
+                                        <div class="flex flex-wrap gap-2 pt-1">
+                                            <a href="<?= e($crmQueryBase(['profile' => (int)($boardRow['guest_id'] ?? 0), 'history' => null, 'compose' => null])) ?>#crm-guest-profile" class="px-3 py-1.5 rounded-lg bg-sky-600/80 hover:bg-sky-500 text-white text-[11px] font-semibold">Профиль гостя</a>
+                                            <form method="post" class="inline">
+                                                <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
+                                                <input type="hidden" name="action" value="send_manual">
+                                                <input type="hidden" name="id" value="<?= (int)($boardRow['id'] ?? 0) ?>">
+                                                <button type="submit" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold">Отметить отправленным</button>
+                                            </form>
+                                            <form method="post" class="inline">
+                                                <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
+                                                <input type="hidden" name="action" value="cancel">
+                                                <input type="hidden" name="id" value="<?= (int)($boardRow['id'] ?? 0) ?>">
+                                                <button type="submit" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-medium">Отменить</button>
+                                            </form>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+
+                <div class="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/5 to-slate-950/60 p-4 space-y-3">
+                    <div class="flex items-center justify-between gap-3">
+                        <div>
+                            <h3 class="text-sm font-semibold text-slate-100">Черновики</h3>
+                            <p class="text-[11px] text-slate-500 mt-1">Retention-сообщения, которые ещё стоит проверить перед ручной отправкой.</p>
+                        </div>
+                        <a href="<?= e($crmQueryBase(['status' => 'draft'])) ?>#crm-outbox-table" class="text-[11px] text-cyan-300 hover:text-cyan-200 font-medium">Открыть список</a>
+                    </div>
+                    <?php if ($sendBoardDraftRows === []): ?>
+                        <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-6 text-center">
+                            <div class="text-sm font-medium text-slate-200">Черновиков сейчас нет</div>
+                            <div class="text-[11px] text-slate-500 mt-2">Создайте one-click draft из приоритетной очереди или из loyalty-сценария выше.</div>
+                        </div>
+                    <?php else: ?>
+                        <div class="space-y-3">
+                            <?php foreach ($sendBoardDraftRows as $boardRow): ?>
+                                <?php $board = $crmOutboxBoardMeta($boardRow); ?>
+                                <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3 space-y-2">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <div class="text-sm font-semibold text-slate-100"><?= e((string)($boardRow['phone'] ?? 'Без телефона')) ?></div>
+                                            <div class="text-[11px] text-slate-500 mt-1"><?= e($board['segment_label'] !== '' ? $board['segment_label'] : ($board['reason'] !== '' ? $board['reason'] : 'Manual return')) ?></div>
+                                        </div>
+                                        <span class="inline-flex items-center rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-200"><?= e($board['status_ui']) ?></span>
+                                    </div>
+                                    <div class="text-xs text-slate-300 bg-slate-900/70 border border-slate-800 rounded-lg px-3 py-2 whitespace-pre-wrap break-words"><?= $board['message_text'] !== '' ? e($board['message_text']) : '—' ?></div>
+                                    <div class="text-[11px] text-slate-500">
+                                        <?= e((string)($boardRow['scheduled_at'] ?? '')) ?>
+                                        <?php if ($board['template_name'] !== ''): ?> · шаблон <?= e($board['template_name']) ?><?php endif; ?>
+                                    </div>
+                                    <div class="flex flex-wrap gap-2 pt-1">
+                                        <a href="<?= e($crmQueryBase(['profile' => (int)($boardRow['guest_id'] ?? 0), 'history' => null, 'compose' => null])) ?>#crm-guest-profile" class="px-3 py-1.5 rounded-lg bg-sky-600/80 hover:bg-sky-500 text-white text-[11px] font-semibold">Профиль гостя</a>
+                                        <a href="<?= e($crmQueryBase(['status' => 'draft'])) ?>#crm-outbox-table" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-medium">Открыть в журнале</a>
+                                        <?php if ($crmEnabled || (($boardRow['template'] ?? '') === 'manual_return')): ?>
+                                            <form method="post" class="inline">
+                                                <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
+                                                <input type="hidden" name="action" value="send_manual">
+                                                <input type="hidden" name="id" value="<?= (int)($boardRow['id'] ?? 0) ?>">
+                                                <button type="submit" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold">Отметить отправленным</button>
+                                            </form>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+
+                <div class="rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 to-slate-950/60 p-4 space-y-3">
+                    <div class="flex items-center justify-between gap-3">
+                        <div>
+                            <h3 class="text-sm font-semibold text-slate-100">Уже отправлено / обработано</h3>
+                            <p class="text-[11px] text-slate-500 mt-1">Manual sends и обработанные сообщения с marker’ом результата, если после touch был paid order.</p>
+                        </div>
+                        <a href="<?= e($crmQueryBase(['status' => 'processed'])) ?>#crm-outbox-table" class="text-[11px] text-emerald-300 hover:text-emerald-200 font-medium">Открыть список</a>
+                    </div>
+                    <?php if ($sendBoardDoneRows === []): ?>
+                        <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-6 text-center">
+                            <div class="text-sm font-medium text-slate-200">Пока нет обработанных retention-сообщений</div>
+                            <div class="text-[11px] text-slate-500 mt-2">Когда сообщения начнут проходить через ручную отправку, здесь появится компактный журнал с результатом.</div>
+                        </div>
+                    <?php else: ?>
+                        <div class="space-y-3">
+                            <?php foreach ($sendBoardDoneRows as $boardRow): ?>
+                                <?php $board = $crmOutboxBoardMeta($boardRow); ?>
+                                <div class="rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3 space-y-2">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <div class="text-sm font-semibold text-slate-100"><?= e((string)($boardRow['phone'] ?? 'Без телефона')) ?></div>
+                                            <div class="text-[11px] text-slate-500 mt-1"><?= e($board['segment_label'] !== '' ? $board['segment_label'] : ($board['reason'] !== '' ? $board['reason'] : 'Manual return')) ?></div>
+                                        </div>
+                                        <span class="inline-flex items-center rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"><?= e($board['status_ui']) ?></span>
+                                    </div>
+                                    <div class="text-[11px] text-slate-500">
+                                        <?= e((string)($boardRow['scheduled_at'] ?? '')) ?>
+                                        <?php if ($board['template_name'] !== ''): ?> · шаблон <?= e($board['template_name']) ?><?php endif; ?>
+                                    </div>
+                                    <?php if ($board['returned']): ?>
+                                        <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-100">
+                                            Гость вернулся после retention touch:
+                                            paid order #<?= $board['return_order_id'] ?>
+                                            · <?= e(number_format((float)$board['return_order_total'], 0, '.', ' ')) ?> ₽
+                                            <?php if ($board['days_to_return'] !== null): ?> · через <?= e(number_format((float)$board['days_to_return'], 0, '.', ' ')) ?> дн.<?php endif; ?>
+                                        </div>
+                                    <?php else: ?>
+                                        <div class="text-[11px] text-slate-500">Нового confirmed paid order после этого сообщения пока не видно.</div>
+                                    <?php endif; ?>
+                                    <div class="pt-1">
+                                        <a href="<?= e($crmQueryBase(['profile' => (int)($boardRow['guest_id'] ?? 0), 'history' => null, 'compose' => null])) ?>#crm-guest-profile" class="px-3 py-1.5 rounded-lg bg-sky-600/80 hover:bg-sky-500 text-white text-[11px] font-semibold">Профиль гостя</a>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </section>
 
         <div class="flex flex-wrap gap-2 mb-3">
             <?php
@@ -1349,13 +2552,17 @@ foreach ($inactiveReturnGuests as $_ir) {
             ?>
         </div>
 
-        <section class="section reveal dashboard-card card-motion bg-slate-900/80 border border-slate-800 rounded-3xl p-4">
+        <section id="crm-outbox-table" class="section reveal dashboard-card card-motion bg-slate-900/80 border border-slate-800 rounded-3xl p-4">
+            <div class="mb-4">
+                <h3 class="text-lg font-semibold text-slate-100">Детальный журнал outbox</h3>
+                <p class="text-xs text-slate-500 mt-1">Ниже остаётся исходный детальный список по выбранному статусу: он полезен для проверки payload, копирования текста и ручной операционной работы.</p>
+            </div>
             <?php if (empty($rows)): ?>
                 <div class="empty-state">
                     <svg class="empty-state-icon mx-auto text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-                    <div class="empty-state-title">Нет сообщений</div>
-                    <div class="empty-state-text">Нет записей со статусом «<?= e($statusFilterUiLabel) ?>».</div>
-                    <?php if ($crmEnabled): ?><a href="/restaurant/crm_campaigns.php" class="inline-block px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium btn-motion">Создать кампанию</a><?php else: ?><a href="/owner/billing.php" class="inline-block px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium">Перейти на тариф GROWTH</a><?php endif; ?>
+                    <div class="empty-state-title"><?= e($outboxEmptyTitle) ?></div>
+                    <div class="empty-state-text"><?= e($outboxEmptyText) ?></div>
+                    <?php if ($crmEnabled): ?><a href="/restaurant/crm_campaigns.php" class="inline-block px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium btn-motion">Создать кампанию</a><?php else: ?><a href="/restaurant/activate.php?plan=growth" class="inline-block px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium">Открыть тариф GROWTH</a><?php endif; ?>
                 </div>
             <?php else: ?>
                 <div class="overflow-x-auto">
@@ -1379,6 +2586,7 @@ foreach ($inactiveReturnGuests as $_ir) {
                                         if (!is_array($payload)) $payload = [];
                                         $msgText = (string)($payload['text'] ?? '');
                                         $reason  = (string)($payload['reason'] ?? ($payload['retention_reason'] ?? ($payload['cause'] ?? '')));
+                                        $payloadTemplateName = trim((string)($payload['template_name'] ?? ''));
 
                                         $suggested = $payload['suggested_items'] ?? ($payload['suggested_dishes'] ?? ($payload['suggested_item_names'] ?? null));
                                         $suggestedNames = [];
@@ -1431,6 +2639,9 @@ foreach ($inactiveReturnGuests as $_ir) {
                                     <td class="py-2 pr-2 text-slate-200"><?= e($suggestedStr) ?></td>
                                     <td class="py-2 pr-2 text-slate-200">
                                         <?= $reason !== '' ? e($reason) : '—' ?>
+                                        <?php if ($payloadTemplateName !== ''): ?>
+                                            <div class="text-[11px] text-slate-500 mt-1">Шаблон: <?= e($payloadTemplateName) ?></div>
+                                        <?php endif; ?>
                                     </td>
                                     <td class="py-2 pr-2"><?= e($statusUi) ?></td>
                                     <td class="py-2">

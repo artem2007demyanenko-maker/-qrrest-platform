@@ -1,6 +1,6 @@
 import { expect, expectJsonResponseHealthy, expectNoServerErrors, expectPageHealthy, loginAs, test, visitReadOnly, waitForJsonPolling } from './fixtures';
 import { barCredentials, coldCredentials, dessertCredentials, ownerCredentials } from './config';
-import { expectNoRuntimeText } from './test-helpers';
+import { expectNoRuntimeText, skipOrFail } from './test-helpers';
 
 type StationName = 'cold' | 'bar' | 'dessert';
 
@@ -34,7 +34,7 @@ test.describe('Station KDS flow', () => {
   for (const station of ['cold', 'bar', 'dessert'] as StationName[]) {
     test(`${station} station opens and API payload is station-scoped`, async ({ page, diagnostics }) => {
       const credentials = stationCredentials[station];
-      test.skip(!credentials, `Set QRREST_${station.toUpperCase()}_EMAIL/PASSWORD to run ${station} KDS smoke checks.`);
+      skipOrFail(test.skip, !credentials, `Set QRREST_${station.toUpperCase()}_EMAIL/PASSWORD to run ${station} KDS smoke checks.`);
 
       await loginAs(page, credentials!);
       const response = await visitReadOnly(page, kdsPath(station));
@@ -54,7 +54,7 @@ test.describe('Station KDS flow', () => {
 
     test(`${station} station polling returns valid JSON`, async ({ page, diagnostics }) => {
       const credentials = stationCredentials[station];
-      test.skip(!credentials, `Set QRREST_${station.toUpperCase()}_EMAIL/PASSWORD to run ${station} polling smoke checks.`);
+      skipOrFail(test.skip, !credentials, `Set QRREST_${station.toUpperCase()}_EMAIL/PASSWORD to run ${station} polling smoke checks.`);
 
       await loginAs(page, credentials!);
       const pollingPattern = new RegExp(`/staff/kitchen_api\\.php.*station=${encodeURIComponent(station)}`, 'i');
@@ -73,7 +73,7 @@ test.describe('Station KDS flow', () => {
   }
 
   test('owner/admin KDS super-view can request all stations', async ({ page, diagnostics }) => {
-    test.skip(!ownerCredentials, 'Set QRREST_OWNER_EMAIL/PASSWORD or QRREST_ADMIN_EMAIL/PASSWORD to run owner KDS smoke checks.');
+    skipOrFail(test.skip, !ownerCredentials, 'Set QRREST_OWNER_EMAIL/PASSWORD or QRREST_ADMIN_EMAIL/PASSWORD to run owner KDS smoke checks.');
 
     await loginAs(page, ownerCredentials!);
     const response = await visitReadOnly(page, '/staff/kitchen.php?station=all');

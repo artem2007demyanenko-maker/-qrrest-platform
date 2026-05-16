@@ -11,6 +11,9 @@
 if (file_exists(__DIR__ . '/cache.php')) {
     require_once __DIR__ . '/cache.php';
 }
+if (file_exists(__DIR__ . '/schema_guard.php')) {
+    require_once __DIR__ . '/schema_guard.php';
+}
 
 /**
  * Single canonical health score (score + label + explanation).

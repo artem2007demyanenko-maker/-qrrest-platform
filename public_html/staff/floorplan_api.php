@@ -1,23 +1,21 @@
 <?php
 
 require_once __DIR__ . '/../../app/bootstrap.php';
-
-require_login();
-
-header('Content-Type: application/json; charset=utf-8');
-
-if (!$currentRestaurant) {
-    echo json_encode([
-        'success' => false,
-        'message' => 'Контекст ресторана не найден',
-    ], JSON_UNESCAPED_UNICODE);
-    exit;
+require_once __DIR__ . '/../../app/order_payment_runtime.php';
+require_once __DIR__ . '/../../app/waiter_calls.php';
+if (file_exists(__DIR__ . '/../../app/runtime_schema_bootstrap.php')) {
+    require_once __DIR__ . '/../../app/runtime_schema_bootstrap.php';
 }
 
-if (!function_exists('require_restaurant_role')) {
+header('Content-Type: application/json; charset=utf-8');
+$floorplanRole = function_exists('require_staff_restaurant_access')
+    ? require_staff_restaurant_access()
+    : null;
+if (!is_string($floorplanRole) || !in_array($floorplanRole, ['owner', 'admin', 'waiter', 'staff'], true)) {
+    http_response_code(403);
     echo json_encode([
         'success' => false,
-        'message' => 'Ошибка проверки доступа',
+        'message' => 'Access denied',
     ], JSON_UNESCAPED_UNICODE);
     exit;
 }
@@ -31,8 +29,6 @@ if ($restaurantId <= 0) {
     exit;
 }
 
-require_restaurant_role($restaurantId, ['staff', 'admin', 'owner']);
-
 $pdo = db();
 if (!$pdo instanceof PDO) {
     echo json_encode([
@@ -41,46 +37,18 @@ if (!$pdo instanceof PDO) {
     ], JSON_UNESCAPED_UNICODE);
     exit;
 }
-
-if (file_exists(__DIR__ . '/../../app/schema_guard.php')) {
-    require_once __DIR__ . '/../../app/schema_guard.php';
+if (function_exists('runtime_schema_ensure_table_reservations')) {
+    runtime_schema_ensure_table_reservations($pdo);
 }
-
-/**
- * Ensure waiter_calls table exists (safe runtime preflight).
- */
-function fp_waiter_calls_ensure_table(PDO $pdo): void
-{
-    if (function_exists('db_table_exists') && db_table_exists('waiter_calls')) {
-        return;
-    }
-
-    // Best-effort: create if missing.
-    // If DB user lacks privileges, feature will be disabled gracefully by returning empty calls.
-    try {
-        $pdo->exec("
-            CREATE TABLE IF NOT EXISTS waiter_calls (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                restaurant_id INT NOT NULL,
-                table_id INT NOT NULL,
-                order_id INT NULL,
-                status VARCHAR(20) NOT NULL DEFAULT 'active',
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                resolved_at DATETIME NULL,
-                KEY idx_rest_table (restaurant_id, table_id),
-                KEY idx_rest_status (restaurant_id, status),
-                KEY idx_rest_order (restaurant_id, order_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        ");
-    } catch (Throwable $e) {
-        // ignore - table may be absent due to permissions
-    }
-}
-
-fp_waiter_calls_ensure_table($pdo);
 
 $now = time();
-$offlineTypes = ['cash', 'card_later', 'pay_later'];
+$orderPaymentTypeExpr = (function_exists('db_column_exists') && db_column_exists('orders', 'payment_type'))
+    ? 'o.payment_type'
+    : "'cash' AS payment_type";
+$orderTypeExpr = (function_exists('db_column_exists') && db_column_exists('orders', 'order_type'))
+    ? 'o.order_type'
+    : "NULL AS order_type";
+order_expire_due_orders($pdo, $restaurantId);
 
 // 1) Fetch latest non-final / non-canceled order per table.
 // Consider as "occupied" if:
@@ -92,7 +60,8 @@ $stmtOrders = $pdo->prepare("
         o.table_id,
         o.order_status,
         o.payment_status,
-        o.payment_type,
+        {$orderPaymentTypeExpr},
+        {$orderTypeExpr},
         o.total_price,
         o.total_amount,
         o.created_at
@@ -123,20 +92,18 @@ foreach ($orders as $o) {
         $sinceMinutes = $createdTs ? max(0, (int)floor(($now - $createdTs) / 60)) : 0;
 
         $paymentType = (string)($o['payment_type'] ?? '');
+        $orderTypeRaw = (string)($o['order_type'] ?? '');
+        $orderType = function_exists('order_type_normalize')
+            ? order_type_normalize($orderTypeRaw, $tid)
+            : 'hall';
+        $orderTypeLabel = function_exists('order_type_label')
+            ? order_type_label($orderTypeRaw, $tid)
+            : 'Зал';
+        $sourceLabel = function_exists('order_source_label')
+            ? order_source_label($orderType, $tid, null)
+            : (($orderType === 'hall') ? 'QR / Зал' : $orderTypeLabel);
         $paymentStatusNorm = $paymentStatus !== '' ? $paymentStatus : 'unpaid';
-
-        $countdownSecondsRemaining = null;
-        $countdownExpired = false;
-        $countdownWarning = false;
-
-        if ($paymentStatusNorm === 'unpaid' && in_array($paymentType, $offlineTypes, true)) {
-            $createdTs2 = $createdTs ?: 0;
-            $elapsedSeconds = max(0, $now - $createdTs2);
-            $remaining = (10 * 60) - $elapsedSeconds;
-            $countdownSecondsRemaining = max(0, (int)$remaining);
-            $countdownExpired = $countdownSecondsRemaining <= 0;
-            $countdownWarning = !$countdownExpired && $countdownSecondsRemaining <= (3 * 60);
-        }
+        $countdownMeta = order_payment_timer_meta($o, $now);
 
         $createdAtShort = '';
         if (!empty($o['created_at'])) {
@@ -150,14 +117,17 @@ foreach ($orders as $o) {
             'order_status' => (string)($o['order_status'] ?? ''),
             'payment_status' => $paymentStatusNorm,
             'payment_type' => $paymentType,
+            'order_type' => $orderType,
+            'order_type_label' => $orderTypeLabel,
+            'source_label' => $sourceLabel,
             'total_price' => $total,
             'created_at_short' => $createdAtShort,
             'created_at' => $o['created_at'] ?? null,
             'since_minutes' => $sinceMinutes,
-            'countdown_seconds_remaining' => $countdownSecondsRemaining,
-            'countdown_expired' => $countdownExpired,
-            'countdown_warning' => $countdownWarning,
-            'countdown_mmss' => $countdownSecondsRemaining !== null ? gmdate('i:s', $countdownSecondsRemaining) : null,
+            'countdown_seconds_remaining' => $countdownMeta['seconds_remaining'],
+            'countdown_expired' => $countdownMeta['expired'],
+            'countdown_warning' => $countdownMeta['warning'],
+            'countdown_mmss' => $countdownMeta['mmss'],
         ];
     }
 }
@@ -221,58 +191,231 @@ if ($orderByTable) {
 
 // 2) Fetch active waiter calls by table.
 $callsByTable = [];
-$stmtCalls = $pdo->prepare("
-    SELECT id, restaurant_id, table_id, order_id, status, created_at, resolved_at
-    FROM waiter_calls
-    WHERE restaurant_id = :rid
-      AND status = 'active'
-      AND resolved_at IS NULL
-    ORDER BY created_at DESC
-");
-$stmtCalls->execute([':rid' => $restaurantId]);
-$callRows = $stmtCalls->fetchAll(PDO::FETCH_ASSOC);
+if (waiter_calls_require_table(false)) {
+    $stmtCalls = $pdo->prepare("
+        SELECT id, restaurant_id, table_id, order_id, status, created_at, resolved_at
+        FROM waiter_calls
+        WHERE restaurant_id = :rid
+          AND status = 'active'
+          AND resolved_at IS NULL
+        ORDER BY created_at DESC
+    ");
+    $stmtCalls->execute([':rid' => $restaurantId]);
+    $callRows = $stmtCalls->fetchAll(PDO::FETCH_ASSOC);
 
-foreach ($callRows as $cr) {
-    $tid = (int)($cr['table_id'] ?? 0);
-    if ($tid <= 0) continue;
-    if (isset($callsByTable[$tid])) continue; // keep latest
+    foreach ($callRows as $cr) {
+        $tid = (int)($cr['table_id'] ?? 0);
+        if ($tid <= 0) continue;
+        if (isset($callsByTable[$tid])) continue; // keep latest
 
-    $createdTs = strtotime((string)($cr['created_at'] ?? ''));
-    $sinceMinutes = $createdTs ? max(0, (int)floor(($now - $createdTs) / 60)) : 0;
+        $createdTs = strtotime((string)($cr['created_at'] ?? ''));
+        $sinceMinutes = $createdTs ? max(0, (int)floor(($now - $createdTs) / 60)) : 0;
 
-    $callsByTable[$tid] = [
-        'id' => (int)($cr['id'] ?? 0),
-        'order_id' => isset($cr['order_id']) ? (int)$cr['order_id'] : null,
-        'created_at' => $cr['created_at'] ?? null,
-        'since_minutes' => $sinceMinutes,
-    ];
+        $callsByTable[$tid] = [
+            'id' => (int)($cr['id'] ?? 0),
+            'order_id' => isset($cr['order_id']) ? (int)$cr['order_id'] : null,
+            'created_at' => $cr['created_at'] ?? null,
+            'since_minutes' => $sinceMinutes,
+        ];
+    }
 }
 
 // 3) Load all tables and build response.
 $stmtTables = $pdo->prepare("
-    SELECT id, name
-    FROM tables
-    WHERE restaurant_id = :rid
-    ORDER BY id ASC
+    SELECT t.id, t.name
+    FROM tables AS t
+    WHERE t.restaurant_id = :rid
+    " . qr_public_sql_exclude_delivery($pdo, 't') . "
+    ORDER BY t.id ASC
 ");
 $stmtTables->execute([':rid' => $restaurantId]);
 $tables = $stmtTables->fetchAll(PDO::FETCH_ASSOC);
+
+$reservationsByTable = [];
+$reservationSummary = [
+    'upcoming_count' => 0,
+    'current_count' => 0,
+    'no_show_count' => 0,
+    'occupancy_estimate' => 0,
+];
+if (function_exists('guest_history_has_table') && guest_history_has_table($pdo, 'table_reservations')) {
+    try {
+        if (function_exists('reservation_summary')) {
+            $reservationSummary = reservation_summary($pdo, $restaurantId, [
+                'horizon_minutes' => 240,
+                'limit' => 5,
+            ]);
+        }
+        $windowStart = date('Y-m-d H:i:s', $now - 1800);
+        $windowEnd = date('Y-m-d H:i:s', $now + (12 * 3600));
+        $stmtReservations = $pdo->prepare("
+            SELECT
+                id,
+                table_id,
+                guest_name,
+                guest_phone,
+                guests_count,
+                reservation_datetime,
+                duration_minutes,
+                status,
+                comment
+            FROM table_reservations
+            WHERE restaurant_id = :restaurant_id
+              AND status IN ('pending', 'confirmed', 'seated')
+              AND reservation_datetime <= :window_end
+              AND DATE_ADD(reservation_datetime, INTERVAL COALESCE(NULLIF(duration_minutes, 0), 120) MINUTE) >= :window_start
+            ORDER BY reservation_datetime ASC, id ASC
+        ");
+        $stmtReservations->execute([
+            ':restaurant_id' => $restaurantId,
+            ':window_start' => $windowStart,
+            ':window_end' => $windowEnd,
+        ]);
+        $reservationRows = $stmtReservations->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        foreach ($reservationRows as $row) {
+            $tableId = (int)($row['table_id'] ?? 0);
+            if ($tableId <= 0) {
+                continue;
+            }
+            $startTs = strtotime((string)($row['reservation_datetime'] ?? ''));
+            if ($startTs === false) {
+                continue;
+            }
+            $duration = max(30, (int)($row['duration_minutes'] ?? 120));
+            $endTs = $startTs + ($duration * 60);
+            $isCurrent = ($now >= $startTs && $now <= $endTs);
+            $minutesUntil = (int)floor(($startTs - $now) / 60);
+            $candidate = [
+                'id' => (int)($row['id'] ?? 0),
+                'table_id' => $tableId,
+                'guest_name' => trim((string)($row['guest_name'] ?? '')),
+                'guest_phone' => trim((string)($row['guest_phone'] ?? '')),
+                'guests_count' => (int)($row['guests_count'] ?? 1),
+                'reservation_datetime' => (string)($row['reservation_datetime'] ?? ''),
+                'duration_minutes' => $duration,
+                'status' => (string)($row['status'] ?? 'pending'),
+                'status_label' => function_exists('reservation_status_label')
+                    ? reservation_status_label((string)($row['status'] ?? 'pending'))
+                    : 'Бронь',
+                'comment' => trim((string)($row['comment'] ?? '')),
+                'minutes_until' => $minutesUntil,
+                'is_current' => $isCurrent,
+            ];
+
+            if (!isset($reservationsByTable[$tableId])) {
+                $reservationsByTable[$tableId] = $candidate;
+                continue;
+            }
+            $existing = $reservationsByTable[$tableId];
+            $existingCurrent = !empty($existing['is_current']);
+            if ($isCurrent && !$existingCurrent) {
+                $reservationsByTable[$tableId] = $candidate;
+                continue;
+            }
+            if ($isCurrent === $existingCurrent && $minutesUntil < (int)($existing['minutes_until'] ?? 0)) {
+                $reservationsByTable[$tableId] = $candidate;
+            }
+        }
+    } catch (Throwable $e) {
+        error_log('FLOORPLAN_RESERVATIONS_LOAD_FAIL rest_id=' . $restaurantId . ' ' . $e->getMessage());
+    }
+}
 
 $byTable = [];
 foreach ($tables as $t) {
     $tid = (int)($t['id'] ?? 0);
     if ($tid <= 0) continue;
 
+    $order = $orderByTable[$tid] ?? null;
+    $waiterCall = $callsByTable[$tid] ?? null;
+    $reservation = $reservationsByTable[$tid] ?? null;
+    $meta = function_exists('floorplan_table_status_meta')
+        ? floorplan_table_status_meta($order, $waiterCall)
+        : [
+            'status_key' => $order ? 'active_order' : 'free',
+            'status_label' => $order ? 'Активный заказ' : 'Свободно',
+            'color_key' => $order ? 'sky' : 'slate',
+            'priority' => $order ? 60 : 0,
+            'is_attention' => false,
+        ];
+    if (
+        !$order
+        && !$waiterCall
+        && is_array($reservation)
+        && (($meta['status_key'] ?? 'free') === 'free')
+    ) {
+        $isCurrentReservation = !empty($reservation['is_current']);
+        $minutesUntil = (int)($reservation['minutes_until'] ?? 0);
+        $meta = [
+            'status_key' => 'reserved',
+            'status_label' => $isCurrentReservation
+                ? 'Стол забронирован'
+                : (($minutesUntil > 0 && $minutesUntil <= 60) ? ('Бронь через ' . $minutesUntil . ' мин') : 'Ожидается бронь'),
+            'color_key' => $isCurrentReservation ? 'amber' : 'indigo',
+            'priority' => $isCurrentReservation ? 55 : 40,
+            'is_attention' => $isCurrentReservation,
+        ];
+    }
+
+    $paymentTypeShort = '';
+    $paymentStatusShort = '';
+    if ($order) {
+        $pt = (string)($order['payment_type'] ?? '');
+        $ps = (string)($order['payment_status'] ?? '');
+        $paymentTypeShort = [
+            'cash' => 'Наличные',
+            'card_later' => 'Карта позже',
+            'pay_later' => 'Позже',
+        ][$pt] ?? $pt;
+        $paymentStatusShort = [
+            'paid' => 'Оплачен',
+            'unpaid' => 'Не оплачен',
+            'pending' => 'Ожидает',
+            'canceled' => 'Отменён',
+        ][$ps] ?? $ps;
+    }
+
     $byTable[$tid] = [
         'table_id' => $tid,
         'table_name' => (string)($t['name'] ?? ''),
-        'order' => $orderByTable[$tid] ?? null,
-        'waiter_call' => $callsByTable[$tid] ?? null,
+        'status_key' => (string)($meta['status_key'] ?? 'free'),
+        'status_label' => (string)($meta['status_label'] ?? 'Свободно'),
+        'color_key' => (string)($meta['color_key'] ?? 'slate'),
+        'priority' => (int)($meta['priority'] ?? 0),
+        'is_attention' => (bool)($meta['is_attention'] ?? false),
+        'active_order_id' => $order ? (int)($order['id'] ?? 0) : null,
+        'order_total' => $order ? (float)($order['total_price'] ?? 0) : null,
+        'order_type' => $order ? (string)($order['order_type'] ?? 'hall') : null,
+        'order_type_label' => $order ? (string)($order['order_type_label'] ?? 'Зал') : null,
+        'source_label' => $order ? (string)($order['source_label'] ?? '') : null,
+        'payment_status' => $order ? (string)($order['payment_status'] ?? 'unpaid') : null,
+        'payment_status_short' => $order ? $paymentStatusShort : null,
+        'payment_type' => $order ? (string)($order['payment_type'] ?? 'cash') : null,
+        'payment_type_short' => $order ? $paymentTypeShort : null,
+        'waiting_minutes' => $order ? (int)($order['since_minutes'] ?? 0) : null,
+        'created_at' => $order ? ($order['created_at'] ?? null) : null,
+        'created_at_short' => $order ? ($order['created_at_short'] ?? null) : null,
+        'countdown_mmss' => $order ? ($order['countdown_mmss'] ?? null) : null,
+        'countdown_warning' => $order ? (bool)($order['countdown_warning'] ?? false) : false,
+        'countdown_expired' => $order ? (bool)($order['countdown_expired'] ?? false) : false,
+        'ready_items_count' => $order ? (int)($order['ready_items_count'] ?? 0) : 0,
+        'total_items_count' => $order ? (int)($order['total_items_count'] ?? 0) : 0,
+        'partial_ready' => $order ? (bool)($order['partial_ready'] ?? false) : false,
+        'waiter_call_flag' => $waiterCall ? true : false,
+        'reservation_flag' => is_array($reservation),
+        'reservation' => $reservation,
+        'order' => $order,
+        'waiter_call' => $waiterCall,
     ];
 }
 
 echo json_encode([
     'success' => true,
     'by_table' => $byTable,
+    'reservation_summary' => [
+        'upcoming_count' => (int)($reservationSummary['upcoming_count'] ?? 0),
+        'current_count' => (int)($reservationSummary['current_count'] ?? 0),
+        'no_show_count' => (int)($reservationSummary['no_show_count'] ?? 0),
+        'occupancy_estimate' => (int)($reservationSummary['occupancy_estimate'] ?? 0),
+    ],
 ], JSON_UNESCAPED_UNICODE);
-

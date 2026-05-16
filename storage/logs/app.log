@@ -1,3 +1,6 @@
 2026-03-12T07:25:18Z [info] cron_runner start rid=7d48533f
 2026-03-12T07:25:18Z [info] cron_runner crm_outbox processed=0 rid=7d48533f
 2026-03-12T07:25:18Z [info] cron_runner done rid=7d48533f
+2026-05-08T11:38:24Z [info] EVENT order_created {"event":"order_created","context":{"restaurant_id":4,"order_id":19,"table_id":8,"order_type":"hall","total":450,"payment_status":"unpaid","payment_type":"cash","loyalty_points_spent":0,"promo_id":0,"promo_code":"","promo_discount":0},"rid":"933c38a5f44b191c"}
+2026-05-09T09:19:12Z [info] EVENT order_created {"event":"order_created","context":{"restaurant_id":4,"order_id":20,"table_id":8,"order_type":"hall","total":1020,"payment_status":"unpaid","payment_type":"cash","loyalty_points_spent":0,"promo_id":0,"promo_code":"","promo_discount":0},"rid":"e7bb852e27abbddd"}
+2026-05-09T09:26:41Z [info] EVENT order_created {"event":"order_created","context":{"restaurant_id":4,"order_id":21,"table_id":8,"order_type":"hall","total":1020,"payment_status":"unpaid","payment_type":"cash","loyalty_points_spent":0,"promo_id":0,"promo_code":"","promo_discount":0},"rid":"fca5642987ec7bd5"}

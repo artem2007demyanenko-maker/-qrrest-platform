@@ -143,21 +143,13 @@ if (file_exists(__DIR__ . '/../../app/growth_engine_arch.php')) {
     <link href="/assets/css/motion.css" rel="stylesheet">
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-50 flex <?= is_demo_mode() ? 'demo-mode' : '' ?>">
+<?php
+$restaurantSidebarActive = 'growth_suggestions';
+$restaurantSidebarName = (string)($currentRestaurant['name'] ?? 'Ресторан');
+require __DIR__ . '/_sidebar_mobile.php';
+?>
 
-<aside class="w-64 bg-slate-950/80 border-r border-slate-800 p-4 hidden md:block">
-    <?= brand_restaurant_sidebar_header_html($currentRestaurant['name']) ?>
-    <nav class="sidebar-nav space-y-2 text-sm">
-        <a href="/restaurant/dashboard.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Обзор</a>
-        <a href="/restaurant/growth_suggestions.php" class="block px-3 py-2 rounded-lg bg-slate-800/70">Предложения роста</a>
-        <a href="/restaurant/revenue.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Доход</a>
-        <a href="/restaurant/crm.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">CRM</a>
-        <a href="/restaurant/crm_campaigns.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">CRM кампании</a>
-        <a href="/restaurant/menu_items.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Блюда</a>
-        <a href="/restaurant/upsell_rules.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Правила допродаж</a>
-        <a href="/restaurant/settings.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60">Настройки</a>
-        <a href="/logout.php" class="block px-3 py-2 rounded-lg hover:bg-slate-800/60 text-red-300">Выйти</a>
-    </nav>
-</aside>
+<?php require __DIR__ . '/_sidebar.php'; ?>
 
 <main class="flex-1 p-4">
     <div class="max-w-4xl mx-auto space-y-4">
@@ -251,7 +243,7 @@ if (file_exists(__DIR__ . '/../../app/growth_engine_arch.php')) {
                                 }
                                 elseif (($s['type'] ?? '') === 'menu_promote') {
                                     $payload = !empty($s['payload_json']) ? json_decode($s['payload_json'], true) : [];
-                                    $link = '/restaurant/menu_items.php' . (isset($payload['menu_item_id']) && $payload['menu_item_id'] ? '?edit=' . (int)$payload['menu_item_id'] : '');
+                                    $link = '/restaurant/menu_manage.php' . (isset($payload['menu_item_id']) && $payload['menu_item_id'] ? '?edit=' . (int)$payload['menu_item_id'] . '#dish-form' : '#dishes');
                                 }
                                 ?>
                                 <form method="post" class="inline mr-1">

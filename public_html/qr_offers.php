@@ -40,14 +40,27 @@ if ($tableId <= 0) {
     exit;
 }
 
-
-$stmt = $pdo->prepare("SELECT id FROM tables WHERE id=:id AND restaurant_id=:r LIMIT 1");
-$stmt->execute([':id' => $tableId, ':r' => (int)$currentRestaurant['id']]);
-if (!$stmt->fetchColumn()) {
-    http_response_code(404);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(['success' => false, 'error' => 'table_not_found'], JSON_UNESCAPED_UNICODE);
-    exit;
+if (function_exists('is_demo_mode') && is_demo_mode() && function_exists('demo_table_by_id')) {
+    $demoTable = demo_table_by_id($tableId);
+    if (!$demoTable || (int)($demoTable['id'] ?? 0) <= 0) {
+        http_response_code(404);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['success' => false, 'error' => 'table_not_found'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+} else {
+    $stmt = $pdo->prepare(
+        'SELECT id FROM tables WHERE id=:id AND restaurant_id=:r '
+        . qr_public_sql_exclude_delivery($pdo, '')
+        . ' LIMIT 1'
+    );
+    $stmt->execute([':id' => $tableId, ':r' => (int)$currentRestaurant['id']]);
+    if (!$stmt->fetchColumn()) {
+        http_response_code(404);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['success' => false, 'error' => 'table_not_found'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 }
 
 // Soft upsell gating: return no offers when plan has upsell disabled (demo unchanged).

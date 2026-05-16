@@ -89,14 +89,13 @@ function get_ai_copilot_summary(int $restaurantId): array
 
         $guestReturnRate = null;
         if (function_exists('db_table_exists') && db_table_exists('crm_guests')) {
-            $pdo = db();
-            $stmt = $pdo->prepare("SELECT COUNT(*) FROM crm_guests WHERE restaurant_id = ? AND visits_count >= 1");
-            $stmt->execute([$restaurantId]);
-            $total = (int) $stmt->fetchColumn();
-            $stmt = $pdo->prepare("SELECT COUNT(*) FROM crm_guests WHERE restaurant_id = ? AND visits_count > 1");
-            $stmt->execute([$restaurantId]);
-            $returning = (int) $stmt->fetchColumn();
-            $guestReturnRate = $total > 0 ? round(100.0 * $returning / $total, 1) : null;
+            if (!function_exists('get_retention_stats') && file_exists(__DIR__ . '/guest_retention.php')) {
+                require_once __DIR__ . '/guest_retention.php';
+            }
+            if (function_exists('get_retention_stats')) {
+                $retention = get_retention_stats($restaurantId);
+                $guestReturnRate = isset($retention['repeat_rate_pct']) ? (float)$retention['repeat_rate_pct'] : null;
+            }
         }
         if ($guestReturnRate !== null) {
             if ($guestReturnRate < 20) {

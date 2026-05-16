@@ -70,6 +70,23 @@ function db_column_exists(string $table, string $column): bool
     }
 }
 
+/**
+ * guest_cards: canonical public id column for tokens / QR (new: public_uid, legacy: card_uid).
+ */
+function guest_cards_uid_db_column(): string
+{
+    static $col = null;
+    if ($col !== null) {
+        return $col;
+    }
+    if (function_exists('db_column_exists') && db_column_exists('guest_cards', 'public_uid')) {
+        $col = 'public_uid';
+        return $col;
+    }
+    $col = 'card_uid';
+    return $col;
+}
+
 /** Billing feature: plans, subscriptions, invoices, payments tables exist. */
 function schema_guard_billing_ready(): bool
 {

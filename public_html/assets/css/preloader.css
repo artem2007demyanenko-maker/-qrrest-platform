@@ -1,0 +1,115 @@
+.qr-preloader-lock {
+    overflow: hidden;
+}
+
+.qr-preloader {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at center, #0b1f2e 0%, #050b16 100%);
+    overflow: hidden;
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 560ms ease, visibility 560ms ease;
+}
+
+.qr-preloader::before,
+.qr-preloader::after {
+    content: "";
+    position: absolute;
+    border-radius: 999px;
+    filter: blur(48px);
+    pointer-events: none;
+}
+
+.qr-preloader::before {
+    width: min(38vw, 360px);
+    height: min(38vw, 360px);
+    background: rgba(16, 185, 129, 0.14);
+    top: 12%;
+    left: 10%;
+}
+
+.qr-preloader::after {
+    width: min(34vw, 300px);
+    height: min(34vw, 300px);
+    background: rgba(34, 211, 238, 0.10);
+    bottom: 14%;
+    right: 8%;
+}
+
+.qr-preloader.is-hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.qr-preloader__canvas,
+.qr-preloader__fallback {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.qr-preloader__canvas {
+    display: block;
+    will-change: transform;
+}
+
+.qr-preloader__fallback {
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.qr-preloader__fallback img {
+    width: min(72vw, 520px);
+    max-width: 100%;
+    height: auto;
+    filter:
+        drop-shadow(0 0 18px rgba(16, 185, 129, 0.18))
+        drop-shadow(0 0 36px rgba(34, 211, 238, 0.10));
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+    transition: opacity 520ms ease, transform 520ms ease, filter 520ms ease;
+}
+
+.qr-preloader__fallback.is-visible {
+    display: flex;
+}
+
+.qr-preloader__fallback.is-visible img {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+@media (max-width: 640px) {
+    .qr-preloader { background: radial-gradient(circle at center, #0a1a2a 0%, #050b16 100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .qr-preloader,
+    .qr-preloader__fallback img {
+        transition-duration: 220ms;
+    }
+}
+
+#cookie-banner,
+#qr-cookie-banner,
+#qr-cookie-consent-root {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+}
+
+.app-loaded #qr-cookie-consent-root.is-visible,
+.app-loaded #qr-cookie-banner.is-visible {
+    opacity: 1;
+}

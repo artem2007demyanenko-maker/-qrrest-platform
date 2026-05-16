@@ -209,6 +209,7 @@ function stripe_handle_checkout_completed(array $session, string $rid): void
 {
     $pdo = db();
     $userId = (int)($session['metadata']['user_id'] ?? 0);
+    $restaurantId = (int)($session['metadata']['restaurant_id'] ?? 0);
     $planId = (int)($session['metadata']['plan_id'] ?? 0);
     $planCode = trim((string)($session['metadata']['plan_code'] ?? ''));
     $subscriptionId = $session['subscription'] ?? null;
@@ -259,6 +260,9 @@ function stripe_handle_checkout_completed(array $session, string $rid): void
     if (function_exists('audit_log')) {
         require_once __DIR__ . '/audit.php';
         audit_log('stripe_checkout_completed', 'subscription', (string)$subId);
+    }
+    if ($restaurantId > 0 && function_exists('billing_sync_restaurant_subscription')) {
+        billing_sync_restaurant_subscription($restaurantId, (string)($plan['code'] ?? ''), 'active', $end ?? null);
     }
 }
 
@@ -425,4 +429,3 @@ function stripe_handle_invoice_payment_failed(array $invoice, string $rid): void
         audit_log('invoice_payment_failed', 'invoice', $stripeInvId);
     }
 }
-

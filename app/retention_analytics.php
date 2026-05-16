@@ -52,6 +52,17 @@ if (!function_exists('retention_normalize_segment')) {
     }
 }
 
+if (!function_exists('retention_payload_crm_guest_id')) {
+    function retention_payload_crm_guest_id(array $payload): int
+    {
+        $crmGuestId = (int)($payload['crm_guest_id'] ?? 0);
+        if ($crmGuestId > 0) {
+            return $crmGuestId;
+        }
+        return (int)($payload['guest_id'] ?? 0);
+    }
+}
+
 if (!function_exists('retention_segment_from_reason')) {
     /**
      * Legacy fallback mapping for old payloads without retention_segment.
@@ -166,7 +177,8 @@ if (!function_exists('retention_campaigns_for_period')) {
                     'suggestion_id' => (int)($r['id'] ?? 0),
                     'status' => (string)($r['status'] ?? 'pending'),
                     'campaign_id' => $campaignId,
-                    'guest_id' => (int)($payload['guest_id'] ?? 0),
+                    'guest_id' => retention_payload_crm_guest_id($payload),
+                    'crm_guest_id' => retention_payload_crm_guest_id($payload),
                     'order_id' => (int)($payload['order_id'] ?? 0),
                     'reason' => (string)($payload['reason'] ?? ''),
                     'retention_segment' => retention_normalize_segment($payload['retention_segment'] ?? null),
@@ -242,17 +254,17 @@ if (!function_exists('get_retention_attribution')) {
                 $sql = "
                     SELECT
                         o.id,
-                        o.guest_id,
+                        " . ((function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id')) ? "o.crm_guest_id" : "o.guest_id") . " AS crm_guest_id,
                         {$totalSql} AS return_total,
                         o.created_at
                     FROM orders o
                     WHERE o.restaurant_id = ?
-                      AND o.guest_id IN ($ph)
+                      AND " . ((function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id')) ? "o.crm_guest_id" : "o.guest_id") . " IN ($ph)
                       AND o.created_at > ?
                       AND o.created_at <= ?
                       AND o.payment_status = 'paid'
                       AND o.order_status <> 'canceled'
-                    ORDER BY o.guest_id ASC, o.created_at ASC
+                    ORDER BY " . ((function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id')) ? "o.crm_guest_id" : "o.guest_id") . " ASC, o.created_at ASC
                 ";
                 $params = array_merge(
                     [$restaurantId],
@@ -262,7 +274,7 @@ if (!function_exists('get_retention_attribution')) {
                 $stmt = $pdo->prepare($sql);
                 $stmt->execute($params);
                 foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $o) {
-                    $gid = (int)($o['guest_id'] ?? 0);
+                    $gid = (int)($o['crm_guest_id'] ?? 0);
                     if ($gid <= 0) continue;
                     if (!isset($ordersByGuest[$gid])) $ordersByGuest[$gid] = [];
                     $ordersByGuest[$gid][] = $o;
@@ -291,6 +303,7 @@ if (!function_exists('get_retention_attribution')) {
                     'suggestion_id' => (int)($c['suggestion_id'] ?? 0),
                     'campaign_id' => (string)($c['campaign_id'] ?? ''),
                     'guest_id' => $guestId,
+                    'crm_guest_id' => $guestId,
                     'order_id' => (int)($c['order_id'] ?? 0),
                     'reason' => $reason,
                     'retention_segment' => $segment,
@@ -624,6 +637,774 @@ if (!function_exists('get_retention_segments')) {
     }
 }
 
+if (!function_exists('loyalty_retention_scenario_catalog_for_analytics')) {
+    function loyalty_retention_scenario_catalog_for_analytics(): array
+    {
+        if (function_exists('crm_loyalty_retention_segment_catalog')) {
+            $catalog = crm_loyalty_retention_segment_catalog();
+            if (is_array($catalog) && $catalog !== []) {
+                return $catalog;
+            }
+        }
+
+        return [
+            'loyalty_balance_inactive_14d' => ['label' => 'Есть бонусы, не был 14+ дней'],
+            'single_paid_order_no_return_14d' => ['label' => 'Один оплаченный визит, не вернулся'],
+            'loyalty_balance_no_spend_30d' => ['label' => 'Давно не тратил бонусы'],
+            'high_value_loyal_guest' => ['label' => 'Ценный гость'],
+            'loyalty_points_reminder_7d' => ['label' => 'Напомнить про бонусы'],
+        ];
+    }
+}
+
+if (!function_exists('loyalty_retention_outbox_rows_for_period')) {
+    /**
+     * @return list<array<string,mixed>>
+     */
+    function loyalty_retention_outbox_rows_for_period(int $restaurantId, int $days = 30): array
+    {
+        $restaurantId = (int)$restaurantId;
+        $days = max(1, min(365, (int)$days));
+        if ($restaurantId <= 0 || !function_exists('db') || !function_exists('db_table_exists') || !db_table_exists('crm_outbox')) {
+            return [];
+        }
+
+        $catalog = loyalty_retention_scenario_catalog_for_analytics();
+        if ($catalog === []) {
+            return [];
+        }
+
+        try {
+            $pdo = db();
+            $since = date('Y-m-d H:i:s', strtotime('-' . $days . ' days'));
+            $stmt = $pdo->prepare("
+                SELECT id, guest_id, payload_json, created_at, status
+                FROM crm_outbox
+                WHERE restaurant_id = :rid
+                  AND channel = 'manual'
+                  AND template = 'manual_return'
+                  AND created_at >= :since
+                ORDER BY created_at ASC, id ASC
+                LIMIT 2000
+            ");
+            $stmt->execute(['rid' => $restaurantId, 'since' => $since]);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            if ($rows === []) {
+                return [];
+            }
+
+            $out = [];
+            foreach ($rows as $row) {
+                $payload = json_decode((string)($row['payload_json'] ?? '{}'), true);
+                if (!is_array($payload)) {
+                    $payload = [];
+                }
+
+                $segmentType = trim((string)($payload['segment_type'] ?? ''));
+                if ($segmentType === '') {
+                    $reason = trim((string)($payload['reason'] ?? ''));
+                    if (str_starts_with($reason, 'loyalty_retention:')) {
+                        $segmentType = substr($reason, strlen('loyalty_retention:'));
+                    }
+                }
+                if ($segmentType === '' || !isset($catalog[$segmentType])) {
+                    continue;
+                }
+
+                $crmGuestId = (int)($payload['crm_guest_id'] ?? 0);
+                if ($crmGuestId <= 0) {
+                    $crmGuestId = (int)($row['guest_id'] ?? 0);
+                }
+                if ($crmGuestId <= 0) {
+                    continue;
+                }
+
+                $out[] = [
+                    'outbox_id' => (int)($row['id'] ?? 0),
+                    'crm_guest_id' => $crmGuestId,
+                    'loyalty_guest_id' => (int)($payload['loyalty_guest_id'] ?? 0),
+                    'segment_type' => $segmentType,
+                    'segment_label' => (string)($payload['segment_label'] ?? ($catalog[$segmentType]['label'] ?? $segmentType)),
+                    'created_at' => (string)($row['created_at'] ?? ''),
+                    'status' => (string)($row['status'] ?? 'draft'),
+                    'payload_json' => (string)($row['payload_json'] ?? '{}'),
+                ];
+            }
+
+            return $out;
+        } catch (Throwable $e) {
+            if (function_exists('error_log')) {
+                error_log('loyalty_retention_outbox_rows_for_period ' . $e->getMessage());
+            }
+            return [];
+        }
+    }
+}
+
+if (!function_exists('get_loyalty_retention_guest_feedback_map')) {
+    /**
+     * Best-effort per-guest feedback loop for priority queue rows.
+     * For each guest+segment pair we take the latest loyalty draft row of the same segment
+     * and look for the first confirmed paid order after that draft.
+     *
+     * @param list<array<string,mixed>> $queueRows
+     * @return array<string,array<string,mixed>>
+     */
+    function get_loyalty_retention_guest_feedback_map(int $restaurantId, array $queueRows, int $days = 90): array
+    {
+        $restaurantId = (int)$restaurantId;
+        $days = max(1, min(365, (int)$days));
+        if ($restaurantId <= 0 || $queueRows === []) {
+            return [];
+        }
+
+        $wantedPairs = [];
+        foreach ($queueRows as $row) {
+            $crmGuestId = (int)($row['crm_guest_id'] ?? 0);
+            $segmentType = trim((string)($row['segment_type'] ?? ''));
+            if ($crmGuestId <= 0 || $segmentType === '') {
+                continue;
+            }
+            $wantedPairs[$crmGuestId . ':' . $segmentType] = [
+                'crm_guest_id' => $crmGuestId,
+                'segment_type' => $segmentType,
+            ];
+        }
+        if ($wantedPairs === []) {
+            return [];
+        }
+
+        $draftRows = loyalty_retention_outbox_rows_for_period($restaurantId, $days);
+        if ($draftRows === []) {
+            return [];
+        }
+
+        $latestByPair = [];
+        $minCreatedTs = null;
+        $guestIds = [];
+        foreach ($draftRows as $draft) {
+            $crmGuestId = (int)($draft['crm_guest_id'] ?? 0);
+            $segmentType = trim((string)($draft['segment_type'] ?? ''));
+            $pairKey = $crmGuestId . ':' . $segmentType;
+            if (!isset($wantedPairs[$pairKey])) {
+                continue;
+            }
+            $createdAt = (string)($draft['created_at'] ?? '');
+            $createdTs = strtotime($createdAt);
+            if ($createdTs === false) {
+                continue;
+            }
+            $existing = $latestByPair[$pairKey] ?? null;
+            $existingTs = $existing ? strtotime((string)($existing['created_at'] ?? '')) : false;
+            if ($existing === null || $existingTs === false || $createdTs > $existingTs) {
+                $latestByPair[$pairKey] = $draft;
+            }
+            $guestIds[$crmGuestId] = true;
+            $minCreatedTs = $minCreatedTs === null ? $createdTs : min($minCreatedTs, $createdTs);
+        }
+
+        if ($latestByPair === [] || $guestIds === [] || $minCreatedTs === null) {
+            return [];
+        }
+
+        $ordersByGuest = [];
+        try {
+            $pdo = db();
+            $guestIdList = array_keys($guestIds);
+            $ph = implode(',', array_fill(0, count($guestIdList), '?'));
+            $crmGuestExpr = ((function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id')) ? 'o.crm_guest_id' : 'o.guest_id');
+            $totalSql = retention_analytics_order_total_sql();
+            $stmt = $pdo->prepare("
+                SELECT
+                    o.id,
+                    {$crmGuestExpr} AS crm_guest_id,
+                    {$totalSql} AS order_total,
+                    o.created_at
+                FROM orders o
+                WHERE o.restaurant_id = ?
+                  AND {$crmGuestExpr} IN ({$ph})
+                  AND o.created_at > ?
+                  AND o.payment_status = 'paid'
+                  AND o.order_status <> 'canceled'
+                ORDER BY {$crmGuestExpr} ASC, o.created_at ASC
+            ");
+            $params = array_merge([$restaurantId], $guestIdList, [date('Y-m-d H:i:s', $minCreatedTs)]);
+            $stmt->execute($params);
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $orderRow) {
+                $gid = (int)($orderRow['crm_guest_id'] ?? 0);
+                if ($gid <= 0) {
+                    continue;
+                }
+                $ordersByGuest[$gid][] = $orderRow;
+            }
+        } catch (Throwable $e) {
+            if (function_exists('error_log')) {
+                error_log('get_loyalty_retention_guest_feedback_map orders ' . $e->getMessage());
+            }
+            $ordersByGuest = [];
+        }
+
+        $out = [];
+        foreach ($latestByPair as $pairKey => $draft) {
+            $crmGuestId = (int)($draft['crm_guest_id'] ?? 0);
+            $createdAt = (string)($draft['created_at'] ?? '');
+            $createdTs = strtotime($createdAt);
+            if ($crmGuestId <= 0 || $createdTs === false) {
+                continue;
+            }
+
+            $state = [
+                'has_same_segment_draft' => true,
+                'outbox_id' => (int)($draft['outbox_id'] ?? 0),
+                'outbox_status' => (string)($draft['status'] ?? ''),
+                'outbox_created_at' => $createdAt,
+                'segment_type' => (string)($draft['segment_type'] ?? ''),
+                'segment_label' => (string)($draft['segment_label'] ?? ''),
+                'template_name' => '',
+                'returned' => false,
+                'return_order_id' => 0,
+                'return_order_created_at' => '',
+                'return_order_total' => 0.0,
+                'days_to_return' => null,
+            ];
+
+            $payload = json_decode((string)($draft['payload_json'] ?? '{}'), true);
+            if (is_array($payload)) {
+                $state['template_name'] = (string)($payload['template_name'] ?? '');
+            }
+
+            foreach (($ordersByGuest[$crmGuestId] ?? []) as $orderRow) {
+                $orderTs = strtotime((string)($orderRow['created_at'] ?? ''));
+                if ($orderTs === false || $orderTs <= $createdTs) {
+                    continue;
+                }
+                if (($orderTs - $createdTs) < 3600) {
+                    continue;
+                }
+                $state['returned'] = true;
+                $state['return_order_id'] = (int)($orderRow['id'] ?? 0);
+                $state['return_order_created_at'] = (string)($orderRow['created_at'] ?? '');
+                $state['return_order_total'] = (float)($orderRow['order_total'] ?? 0);
+                $state['days_to_return'] = max(0, (int)floor(($orderTs - $createdTs) / 86400));
+                break;
+            }
+
+            $out[$pairKey] = $state;
+        }
+
+        return $out;
+    }
+}
+
+if (!function_exists('get_manual_return_outbox_outcome_map')) {
+    /**
+     * Compact per-row outcome map for CRM send-board.
+     * Uses the first confirmed paid order after a manual_return row.
+     *
+     * @param list<array<string,mixed>> $outboxRows
+     * @return array<int,array<string,mixed>>
+     */
+    function get_manual_return_outbox_outcome_map(int $restaurantId, array $outboxRows, int $days = 90): array
+    {
+        $restaurantId = (int)$restaurantId;
+        $days = max(1, min(365, (int)$days));
+        if ($restaurantId <= 0 || $outboxRows === []) {
+            return [];
+        }
+
+        $candidateRows = [];
+        $guestIds = [];
+        $minCreatedTs = null;
+        foreach ($outboxRows as $row) {
+            $outboxId = (int)($row['id'] ?? 0);
+            if ($outboxId <= 0) {
+                continue;
+            }
+            $payload = json_decode((string)($row['payload_json'] ?? '{}'), true);
+            if (!is_array($payload)) {
+                $payload = [];
+            }
+            $crmGuestId = (int)($payload['crm_guest_id'] ?? 0);
+            if ($crmGuestId <= 0) {
+                $crmGuestId = (int)($row['guest_id'] ?? 0);
+            }
+            $createdAt = (string)($row['created_at'] ?? '');
+            $createdTs = strtotime($createdAt);
+            if ($crmGuestId <= 0 || $createdTs === false) {
+                continue;
+            }
+            $candidateRows[$outboxId] = [
+                'crm_guest_id' => $crmGuestId,
+                'created_at' => $createdAt,
+                'status' => (string)($row['status'] ?? ''),
+            ];
+            $guestIds[$crmGuestId] = true;
+            $minCreatedTs = $minCreatedTs === null ? $createdTs : min($minCreatedTs, $createdTs);
+        }
+        if ($candidateRows === [] || $guestIds === [] || $minCreatedTs === null) {
+            return [];
+        }
+
+        $ordersByGuest = [];
+        try {
+            $pdo = db();
+            $guestIdList = array_keys($guestIds);
+            $ph = implode(',', array_fill(0, count($guestIdList), '?'));
+            $crmGuestExpr = ((function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id')) ? 'o.crm_guest_id' : 'o.guest_id');
+            $totalSql = retention_analytics_order_total_sql();
+            $stmt = $pdo->prepare("
+                SELECT
+                    o.id,
+                    {$crmGuestExpr} AS crm_guest_id,
+                    {$totalSql} AS order_total,
+                    o.created_at
+                FROM orders o
+                WHERE o.restaurant_id = ?
+                  AND {$crmGuestExpr} IN ({$ph})
+                  AND o.created_at > ?
+                  AND o.payment_status = 'paid'
+                  AND o.order_status <> 'canceled'
+                ORDER BY {$crmGuestExpr} ASC, o.created_at ASC
+            ");
+            $params = array_merge([$restaurantId], $guestIdList, [date('Y-m-d H:i:s', $minCreatedTs)]);
+            $stmt->execute($params);
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $orderRow) {
+                $gid = (int)($orderRow['crm_guest_id'] ?? 0);
+                if ($gid <= 0) {
+                    continue;
+                }
+                $ordersByGuest[$gid][] = $orderRow;
+            }
+        } catch (Throwable $e) {
+            if (function_exists('error_log')) {
+                error_log('get_manual_return_outbox_outcome_map orders ' . $e->getMessage());
+            }
+            return [];
+        }
+
+        $out = [];
+        foreach ($candidateRows as $outboxId => $row) {
+            $createdTs = strtotime((string)$row['created_at']);
+            if ($createdTs === false) {
+                continue;
+            }
+            $result = [
+                'returned' => false,
+                'return_order_id' => 0,
+                'return_order_total' => 0.0,
+                'return_order_created_at' => '',
+                'days_to_return' => null,
+            ];
+            foreach (($ordersByGuest[(int)$row['crm_guest_id']] ?? []) as $orderRow) {
+                $orderTs = strtotime((string)($orderRow['created_at'] ?? ''));
+                if ($orderTs === false || $orderTs <= $createdTs) {
+                    continue;
+                }
+                if (($orderTs - $createdTs) < 3600) {
+                    continue;
+                }
+                $result['returned'] = true;
+                $result['return_order_id'] = (int)($orderRow['id'] ?? 0);
+                $result['return_order_total'] = (float)($orderRow['order_total'] ?? 0);
+                $result['return_order_created_at'] = (string)($orderRow['created_at'] ?? '');
+                $result['days_to_return'] = max(0, (int)floor(($orderTs - $createdTs) / 86400));
+                break;
+            }
+            $out[$outboxId] = $result;
+        }
+
+        return $out;
+    }
+}
+
+if (!function_exists('get_loyalty_retention_scenario_analytics')) {
+    /**
+     * Return analytics by loyalty scenario from crm_outbox drafts/manual rows.
+     * A return is the first confirmed paid order after draft creation.
+     *
+     * @return array<string,array<string,mixed>>
+     */
+    function get_loyalty_retention_scenario_analytics(int $restaurantId, int $days = 30): array
+    {
+        $restaurantId = (int)$restaurantId;
+        $days = max(1, min(365, (int)$days));
+        $catalog = loyalty_retention_scenario_catalog_for_analytics();
+
+        $base = [];
+        foreach ($catalog as $segmentType => $cfg) {
+            $base[$segmentType] = [
+                'segment_type' => $segmentType,
+                'label' => (string)($cfg['label'] ?? $segmentType),
+                'drafts_created' => 0,
+                'unique_guests_targeted' => 0,
+                'returned_guests' => 0,
+                'paid_orders_after_draft' => 0,
+                'returned_revenue' => 0.0,
+                'return_rate' => 0.0,
+                'avg_days_to_return' => null,
+                'last_draft_at' => null,
+            ];
+        }
+        if ($restaurantId <= 0 || $base === []) {
+            return $base;
+        }
+
+        $drafts = loyalty_retention_outbox_rows_for_period($restaurantId, $days);
+        if ($drafts === []) {
+            return $base;
+        }
+
+        $guestIds = [];
+        $minCreatedTs = null;
+        foreach ($drafts as $draft) {
+            $guestId = (int)($draft['crm_guest_id'] ?? 0);
+            $createdTs = strtotime((string)($draft['created_at'] ?? ''));
+            if ($guestId > 0) {
+                $guestIds[$guestId] = true;
+            }
+            if ($createdTs !== false) {
+                $minCreatedTs = ($minCreatedTs === null) ? $createdTs : min($minCreatedTs, $createdTs);
+            }
+        }
+
+        $ordersByGuest = [];
+        if ($guestIds !== [] && $minCreatedTs !== null) {
+            try {
+                $pdo = db();
+                $guestIdList = array_keys($guestIds);
+                $ph = implode(',', array_fill(0, count($guestIdList), '?'));
+                $crmGuestExpr = ((function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id')) ? 'o.crm_guest_id' : 'o.guest_id');
+                $totalSql = retention_analytics_order_total_sql();
+                $stmt = $pdo->prepare("
+                    SELECT
+                        o.id,
+                        {$crmGuestExpr} AS crm_guest_id,
+                        {$totalSql} AS order_total,
+                        o.created_at
+                    FROM orders o
+                    WHERE o.restaurant_id = ?
+                      AND {$crmGuestExpr} IN ({$ph})
+                      AND o.created_at > ?
+                      AND o.payment_status = 'paid'
+                      AND o.order_status <> 'canceled'
+                    ORDER BY {$crmGuestExpr} ASC, o.created_at ASC
+                ");
+                $params = array_merge([$restaurantId], $guestIdList, [date('Y-m-d H:i:s', $minCreatedTs)]);
+                $stmt->execute($params);
+                foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $orderRow) {
+                    $gid = (int)($orderRow['crm_guest_id'] ?? 0);
+                    if ($gid <= 0) {
+                        continue;
+                    }
+                    if (!isset($ordersByGuest[$gid])) {
+                        $ordersByGuest[$gid] = [];
+                    }
+                    $ordersByGuest[$gid][] = $orderRow;
+                }
+            } catch (Throwable $e) {
+                if (function_exists('error_log')) {
+                    error_log('get_loyalty_retention_scenario_analytics orders ' . $e->getMessage());
+                }
+            }
+        }
+
+        $targetedGuests = [];
+        $returnedGuests = [];
+        $sumDays = [];
+        $cntDays = [];
+        $usedOrderIds = [];
+
+        foreach ($drafts as $draft) {
+            $segmentType = (string)($draft['segment_type'] ?? '');
+            if (!isset($base[$segmentType])) {
+                continue;
+            }
+            $crmGuestId = (int)($draft['crm_guest_id'] ?? 0);
+            $createdAt = (string)($draft['created_at'] ?? '');
+            $createdTs = strtotime($createdAt);
+
+            $base[$segmentType]['drafts_created']++;
+            $base[$segmentType]['last_draft_at'] = $createdAt !== ''
+                ? (string)$createdAt
+                : ($base[$segmentType]['last_draft_at'] ?? null);
+            if ($crmGuestId > 0) {
+                $targetedGuests[$segmentType][$crmGuestId] = true;
+            }
+
+            if ($crmGuestId <= 0 || $createdTs === false) {
+                continue;
+            }
+
+            foreach (($ordersByGuest[$crmGuestId] ?? []) as $orderRow) {
+                $orderId = (int)($orderRow['id'] ?? 0);
+                if ($orderId <= 0 || isset($usedOrderIds[$orderId])) {
+                    continue;
+                }
+                $orderTs = strtotime((string)($orderRow['created_at'] ?? ''));
+                if ($orderTs === false || $orderTs <= $createdTs) {
+                    continue;
+                }
+                if (($orderTs - $createdTs) < 3600) {
+                    continue;
+                }
+
+                $usedOrderIds[$orderId] = true;
+                $returnedGuests[$segmentType][$crmGuestId] = true;
+                $base[$segmentType]['paid_orders_after_draft']++;
+                $base[$segmentType]['returned_revenue'] += (float)($orderRow['order_total'] ?? 0);
+                $daysToReturn = (int)floor(($orderTs - $createdTs) / 86400);
+                if ($daysToReturn >= 0) {
+                    $sumDays[$segmentType] = ($sumDays[$segmentType] ?? 0) + $daysToReturn;
+                    $cntDays[$segmentType] = ($cntDays[$segmentType] ?? 0) + 1;
+                }
+                break;
+            }
+        }
+
+        foreach ($base as $segmentType => &$row) {
+            $row['unique_guests_targeted'] = isset($targetedGuests[$segmentType]) ? count($targetedGuests[$segmentType]) : 0;
+            $row['returned_guests'] = isset($returnedGuests[$segmentType]) ? count($returnedGuests[$segmentType]) : 0;
+            $row['returned_revenue'] = round((float)$row['returned_revenue'], 2);
+            $row['return_rate'] = $row['unique_guests_targeted'] > 0
+                ? round($row['returned_guests'] / $row['unique_guests_targeted'], 4)
+                : 0.0;
+            $row['avg_days_to_return'] = !empty($cntDays[$segmentType])
+                ? round(((float)($sumDays[$segmentType] ?? 0)) / (float)$cntDays[$segmentType], 2)
+                : null;
+        }
+        unset($row);
+
+        return $base;
+    }
+}
+
+if (!function_exists('get_loyalty_retention_scenario_analytics_cached')) {
+    function get_loyalty_retention_scenario_analytics_cached(int $restaurantId, int $days = 30): array
+    {
+        $restaurantId = (int)$restaurantId;
+        $days = max(1, min(365, (int)$days));
+        $ttl = 600;
+        $cacheKey = 'loyalty_retention_scenarios_v1:' . $restaurantId . ':' . $days;
+        if (function_exists('cache_get')) {
+            $cached = cache_get($cacheKey);
+            if (is_array($cached)) {
+                return $cached;
+            }
+        }
+        $data = get_loyalty_retention_scenario_analytics($restaurantId, $days);
+        if (function_exists('cache_set')) {
+            cache_set($cacheKey, $data, $ttl);
+        }
+        return $data;
+    }
+}
+
+if (!function_exists('get_loyalty_retention_business_summary')) {
+    /**
+     * Manager-facing CRM/retention summary for dashboard cards.
+     * Uses loyalty retention outbox rows and confirmed paid orders after draft.
+     *
+     * @return array{
+     *   drafts_created:int,
+     *   unique_guests_targeted:int,
+     *   returned_guests:int,
+     *   paid_orders_after_draft:int,
+     *   returned_revenue:float,
+     *   scenarios_active:int,
+     *   last_draft_at:?string,
+     *   best_scenario:?array<string,mixed>
+     * }
+     */
+    function get_loyalty_retention_business_summary(int $restaurantId, int $days = 30): array
+    {
+        $restaurantId = (int)$restaurantId;
+        $days = max(1, min(365, (int)$days));
+        $empty = [
+            'drafts_created' => 0,
+            'unique_guests_targeted' => 0,
+            'returned_guests' => 0,
+            'paid_orders_after_draft' => 0,
+            'returned_revenue' => 0.0,
+            'scenarios_active' => 0,
+            'last_draft_at' => null,
+            'best_scenario' => null,
+        ];
+        if ($restaurantId <= 0) {
+            return $empty;
+        }
+
+        $scenarioAnalytics = function_exists('get_loyalty_retention_scenario_analytics_cached')
+            ? get_loyalty_retention_scenario_analytics_cached($restaurantId, $days)
+            : get_loyalty_retention_scenario_analytics($restaurantId, $days);
+
+        $bestScenario = null;
+        $scenariosActive = 0;
+        foreach ($scenarioAnalytics as $row) {
+            if ((int)($row['drafts_created'] ?? 0) > 0) {
+                $scenariosActive++;
+            }
+            if ($bestScenario === null) {
+                $bestScenario = $row;
+                continue;
+            }
+            $revenueCmp = ((float)($row['returned_revenue'] ?? 0) <=> (float)($bestScenario['returned_revenue'] ?? 0));
+            if ($revenueCmp > 0) {
+                $bestScenario = $row;
+                continue;
+            }
+            if ($revenueCmp === 0) {
+                $returnCmp = ((int)($row['returned_guests'] ?? 0) <=> (int)($bestScenario['returned_guests'] ?? 0));
+                if ($returnCmp > 0) {
+                    $bestScenario = $row;
+                    continue;
+                }
+                if ($returnCmp === 0 && (float)($row['return_rate'] ?? 0) > (float)($bestScenario['return_rate'] ?? 0)) {
+                    $bestScenario = $row;
+                }
+            }
+        }
+
+        $draftRows = loyalty_retention_outbox_rows_for_period($restaurantId, $days);
+        if ($draftRows === []) {
+            $empty['scenarios_active'] = $scenariosActive;
+            if ($bestScenario !== null && ((int)($bestScenario['drafts_created'] ?? 0) > 0 || (float)($bestScenario['returned_revenue'] ?? 0) > 0)) {
+                $empty['best_scenario'] = $bestScenario;
+            }
+            return $empty;
+        }
+
+        usort($draftRows, static function (array $a, array $b): int {
+            $aTs = strtotime((string)($a['created_at'] ?? '')) ?: 0;
+            $bTs = strtotime((string)($b['created_at'] ?? '')) ?: 0;
+            return $aTs <=> $bTs;
+        });
+
+        $guestIds = [];
+        $uniqueGuests = [];
+        $minCreatedTs = null;
+        $lastDraftAt = null;
+        foreach ($draftRows as $draft) {
+            $crmGuestId = (int)($draft['crm_guest_id'] ?? 0);
+            $createdAt = (string)($draft['created_at'] ?? '');
+            $createdTs = strtotime($createdAt);
+            if ($crmGuestId > 0) {
+                $guestIds[$crmGuestId] = true;
+                $uniqueGuests[$crmGuestId] = true;
+            }
+            if ($createdTs !== false) {
+                $minCreatedTs = $minCreatedTs === null ? $createdTs : min($minCreatedTs, $createdTs);
+                if ($lastDraftAt === null || $createdAt > $lastDraftAt) {
+                    $lastDraftAt = $createdAt;
+                }
+            }
+        }
+
+        $ordersByGuest = [];
+        if ($guestIds !== [] && $minCreatedTs !== null) {
+            try {
+                $pdo = db();
+                $guestIdList = array_keys($guestIds);
+                $ph = implode(',', array_fill(0, count($guestIdList), '?'));
+                $crmGuestExpr = ((function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id')) ? 'o.crm_guest_id' : 'o.guest_id');
+                $totalSql = retention_analytics_order_total_sql();
+                $stmt = $pdo->prepare("
+                    SELECT
+                        o.id,
+                        {$crmGuestExpr} AS crm_guest_id,
+                        {$totalSql} AS order_total,
+                        o.created_at
+                    FROM orders o
+                    WHERE o.restaurant_id = ?
+                      AND {$crmGuestExpr} IN ({$ph})
+                      AND o.created_at > ?
+                      AND o.payment_status = 'paid'
+                      AND o.order_status <> 'canceled'
+                    ORDER BY {$crmGuestExpr} ASC, o.created_at ASC
+                ");
+                $params = array_merge([$restaurantId], $guestIdList, [date('Y-m-d H:i:s', $minCreatedTs)]);
+                $stmt->execute($params);
+                foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $orderRow) {
+                    $gid = (int)($orderRow['crm_guest_id'] ?? 0);
+                    if ($gid <= 0) {
+                        continue;
+                    }
+                    if (!isset($ordersByGuest[$gid])) {
+                        $ordersByGuest[$gid] = [];
+                    }
+                    $ordersByGuest[$gid][] = $orderRow;
+                }
+            } catch (Throwable $e) {
+                if (function_exists('error_log')) {
+                    error_log('get_loyalty_retention_business_summary orders ' . $e->getMessage());
+                }
+            }
+        }
+
+        $returnedGuests = [];
+        $usedOrderIds = [];
+        $paidOrdersAfterDraft = 0;
+        $returnedRevenue = 0.0;
+        foreach ($draftRows as $draft) {
+            $crmGuestId = (int)($draft['crm_guest_id'] ?? 0);
+            $createdTs = strtotime((string)($draft['created_at'] ?? ''));
+            if ($crmGuestId <= 0 || $createdTs === false) {
+                continue;
+            }
+            foreach (($ordersByGuest[$crmGuestId] ?? []) as $orderRow) {
+                $orderId = (int)($orderRow['id'] ?? 0);
+                if ($orderId <= 0 || isset($usedOrderIds[$orderId])) {
+                    continue;
+                }
+                $orderTs = strtotime((string)($orderRow['created_at'] ?? ''));
+                if ($orderTs === false || $orderTs <= $createdTs) {
+                    continue;
+                }
+                if (($orderTs - $createdTs) < 3600) {
+                    continue;
+                }
+                $usedOrderIds[$orderId] = true;
+                $returnedGuests[$crmGuestId] = true;
+                $paidOrdersAfterDraft++;
+                $returnedRevenue += (float)($orderRow['order_total'] ?? 0);
+                break;
+            }
+        }
+
+        return [
+            'drafts_created' => count($draftRows),
+            'unique_guests_targeted' => count($uniqueGuests),
+            'returned_guests' => count($returnedGuests),
+            'paid_orders_after_draft' => $paidOrdersAfterDraft,
+            'returned_revenue' => round($returnedRevenue, 2),
+            'scenarios_active' => $scenariosActive,
+            'last_draft_at' => $lastDraftAt,
+            'best_scenario' => ($bestScenario !== null && (((int)($bestScenario['drafts_created'] ?? 0) > 0) || ((float)($bestScenario['returned_revenue'] ?? 0) > 0)))
+                ? $bestScenario
+                : null,
+        ];
+    }
+}
+
+if (!function_exists('get_loyalty_retention_business_summary_cached')) {
+    function get_loyalty_retention_business_summary_cached(int $restaurantId, int $days = 30): array
+    {
+        $restaurantId = (int)$restaurantId;
+        $days = max(1, min(365, (int)$days));
+        $cacheKey = 'loyalty_retention_business_summary_v1:' . $restaurantId . ':' . $days;
+        if (function_exists('cache_get')) {
+            $cached = cache_get($cacheKey);
+            if (is_array($cached)) {
+                return $cached;
+            }
+        }
+        $data = get_loyalty_retention_business_summary($restaurantId, $days);
+        if (function_exists('cache_set')) {
+            cache_set($cacheKey, $data, 600);
+        }
+        return $data;
+    }
+}
+
 if (!function_exists('get_baseline_return_rate')) {
     /**
      * Baseline control: guests with orders in period, excluding guests with crm_retention_with_offer campaigns.
@@ -689,18 +1470,18 @@ if (!function_exists('get_baseline_return_rate')) {
             foreach ($campStmt->fetchAll(PDO::FETCH_ASSOC) as $c) {
                 $pl = json_decode((string)($c['payload_json'] ?? '{}'), true);
                 if (!is_array($pl)) continue;
-                $gid = (int)($pl['guest_id'] ?? 0);
+                $gid = retention_payload_crm_guest_id($pl);
                 if ($gid > 0) $excludedGuests[$gid] = true;
             }
 
             $stmt = $pdo->prepare("
-                SELECT id, guest_id, created_at
+                SELECT id, " . ((function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id')) ? "crm_guest_id" : "guest_id") . " AS crm_guest_id, created_at
                 FROM orders
                 WHERE restaurant_id = :rid
-                  AND guest_id IS NOT NULL
-                  AND guest_id > 0
+                  AND " . ((function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id')) ? "crm_guest_id" : "guest_id") . " IS NOT NULL
+                  AND " . ((function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id')) ? "crm_guest_id" : "guest_id") . " > 0
                   AND created_at >= :since
-                ORDER BY guest_id ASC, created_at ASC
+                ORDER BY " . ((function_exists('db_column_exists') && db_column_exists('orders', 'crm_guest_id')) ? "crm_guest_id" : "guest_id") . " ASC, created_at ASC
                 LIMIT 10000
             ");
             $stmt->execute(['rid' => $restaurantId, 'since' => $since]);
@@ -709,7 +1490,7 @@ if (!function_exists('get_baseline_return_rate')) {
 
             $byGuest = [];
             foreach ($orders as $o) {
-                $gid = (int)($o['guest_id'] ?? 0);
+                $gid = (int)($o['crm_guest_id'] ?? 0);
                 if ($gid <= 0 || isset($excludedGuests[$gid])) continue;
                 $ts = strtotime((string)($o['created_at'] ?? ''));
                 if ($ts === false) continue;
@@ -807,6 +1588,10 @@ if (!function_exists('retention_ensure_campaign_payload_on_accept')) {
                 $payload['guest_id'] = 0;
                 $changed = true;
             }
+            if (!array_key_exists('crm_guest_id', $payload)) {
+                $payload['crm_guest_id'] = (int)($payload['guest_id'] ?? 0);
+                $changed = true;
+            }
             if (!array_key_exists('order_id', $payload)) {
                 $payload['order_id'] = 0;
                 $changed = true;
@@ -837,4 +1622,3 @@ if (!function_exists('retention_ensure_campaign_payload_on_accept')) {
         }
     }
 }
-

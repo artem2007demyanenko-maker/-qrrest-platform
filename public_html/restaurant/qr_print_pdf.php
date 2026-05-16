@@ -26,16 +26,18 @@ $baseUrl   = $protocol . '://' . $subdomain . '.' . $mainDomain . '/qr.php';
 $restName  = $currentRestaurant['name'] ?? 'Restaurant';
 
 $pdo = db();
-$stmt = $pdo->prepare("SELECT id, name FROM tables WHERE restaurant_id = ? ORDER BY name");
+$stmt = $pdo->prepare("
+    SELECT t.id, t.name FROM tables AS t
+    WHERE t.restaurant_id = ?
+    " . qr_public_sql_exclude_delivery($pdo, 't') . "
+    ORDER BY t.name
+");
 $stmt->execute([(int)$currentRestaurant['id']]);
 $tables = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 if (empty($tables)) {
     header('Content-Type: text/html; charset=utf-8');
-    echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>No tables</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <?= brand_head_tags() ?>
-</head><body><p>No tables. <a href="/restaurant/tables.php">Add tables</a>.</p></body></html>';
+    echo '<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Нет столов</title><style>body{font-family:system-ui,-apple-system,sans-serif;background:#0b1120;color:#e2e8f0;padding:24px}.card{max-width:680px;margin:0 auto;border:1px solid #334155;border-radius:16px;padding:20px;background:#111827}a{color:#7dd3fc}</style></head><body><div class="card"><h1 style="margin-top:0;font-size:22px">Нет столов для экспорта PDF</h1><p>Добавьте столы, чтобы сформировать PDF с QR-кодами.</p><p><a href="/restaurant/tables.php">Перейти к столам</a> · <a href="/restaurant/qr_codes.php">QR-коды</a></p></div></body></html>';
     exit;
 }
 

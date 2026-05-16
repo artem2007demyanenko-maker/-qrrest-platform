@@ -3,6 +3,7 @@ import { expect } from './fixtures';
 import {
   ORDER_CREATION_ENABLED,
   MUTATION_ENABLED,
+  STRICT_E2E,
   TEST_TABLE_ID,
   testGuest,
 } from './config';
@@ -123,11 +124,25 @@ export async function expectNoRuntimeText(page: Page): Promise<void> {
 }
 
 export function skipUnlessMutation(testSkip: (condition: boolean, description: string) => void): void {
-  testSkip(!MUTATION_ENABLED, 'Set QRREST_E2E_MUTATION=1 to run cart-mutating smoke checks.');
+  skipOrFail(testSkip, !MUTATION_ENABLED, 'Set QRREST_E2E_MUTATION=1 to run cart-mutating smoke checks.');
 }
 
 export function skipUnlessOrderCreation(testSkip: (condition: boolean, description: string) => void): void {
-  testSkip(!ORDER_CREATION_ENABLED, 'Set QRREST_E2E_CREATE_ORDER=1 to create a real smoke-test order.');
+  skipOrFail(testSkip, !ORDER_CREATION_ENABLED, 'Set QRREST_E2E_CREATE_ORDER=1 to create a real smoke-test order.');
+}
+
+export function skipOrFail(
+  testSkip: (condition: boolean, description: string) => void,
+  condition: boolean,
+  description: string
+): void {
+  if (!condition) {
+    return;
+  }
+  if (STRICT_E2E) {
+    throw new Error(`QRRest E2E baseline incomplete: ${description}`);
+  }
+  testSkip(true, description);
 }
 
 async function fillIfPresent(page: Page, selector: string, value: string): Promise<void> {

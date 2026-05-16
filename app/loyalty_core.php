@@ -1,6 +1,11 @@
 <?php
+/**
+ * Legacy compatibility layer.
+ * Canonical production loyalty flow lives in app/guest_loyalty.php.
+ */
 require_once __DIR__ . '/db.php';
 
+if (!function_exists('loyalty_uuid_v4')) {
 function loyalty_uuid_v4(): string {
   $data = random_bytes(16);
   $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
@@ -14,7 +19,9 @@ function loyalty_uuid_v4(): string {
     substr($hex,20,12)
   );
 }
+}
 
+if (!function_exists('loyalty_get_or_create_card')) {
 function loyalty_get_or_create_card(PDO $pdo, int $guest_id, int $restaurant_id): array {
   $pdo->beginTransaction();
   try {
@@ -43,7 +50,9 @@ function loyalty_get_or_create_card(PDO $pdo, int $guest_id, int $restaurant_id)
     throw $e;
   }
 }
+}
 
+if (!function_exists('loyalty_get_settings')) {
 function loyalty_get_settings(PDO $pdo, int $restaurant_id): array {
   $st = $pdo->prepare("SELECT * FROM restaurant_loyalty_settings WHERE restaurant_id=? LIMIT 1");
   $st->execute([$restaurant_id]);
@@ -61,7 +70,9 @@ function loyalty_get_settings(PDO $pdo, int $restaurant_id): array {
 
   return $row;
 }
+}
 
+if (!function_exists('loyalty_earn_for_order')) {
 function loyalty_earn_for_order(PDO $pdo, int $card_id, int $order_id, int $points): void {
   if ($points <= 0) return;
 
@@ -79,6 +90,8 @@ function loyalty_earn_for_order(PDO $pdo, int $card_id, int $order_id, int $poin
     throw $e;
   }
 }
+}
+if (!function_exists('loyalty_lookup_by_uid')) {
 function loyalty_lookup_by_uid(PDO $pdo, string $uid): ?array {
   $st = $pdo->prepare("
     SELECT gc.*, la.balance
@@ -90,4 +103,5 @@ function loyalty_lookup_by_uid(PDO $pdo, string $uid): ?array {
   $st->execute([$uid]);
   $row = $st->fetch(PDO::FETCH_ASSOC);
   return $row ?: null;
+}
 }

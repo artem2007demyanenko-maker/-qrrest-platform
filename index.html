@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Платформа ресторанов</title>
+  <link rel="stylesheet" href="assets/css/atmosphere.css">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="qr-atmosphere" aria-hidden="true"></div>
+  <header class="site-header">
+    <div class="container hero-wrap">
+      <div class="hero-decor hero-decor--left" aria-hidden="true"></div>
+      <div class="hero-decor hero-decor--right" aria-hidden="true"></div>
+      <p class="hero-kicker">QR REST Platform</p>
+      <h1>Платформа ресторанов</h1>
+      <p class="subtitle hero-subtitle">Выберите ресторан, чтобы открыть онлайн-меню и оформить доставку через платформу (без QR у стола). Для заказа за столом по-прежнему используйте QR-код в зале.</p>
+      <div class="hero-pills" aria-label="Ключевые возможности">
+        <span class="hero-pill">QR ordering</span>
+        <span class="hero-pill">Online checkout</span>
+        <span class="hero-pill">Loyalty ready</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container platform-main">
+    <section class="restaurants-section reveal" aria-labelledby="restaurants-title">
+      <h2 id="restaurants-title">Список ресторанов</h2>
+      <p class="section-subtitle">Выберите площадку и откройте меню в один клик.</p>
+      <div id="restaurants-grid" class="restaurants-grid" aria-live="polite">
+        <article class="restaurant-card skeleton-card" aria-hidden="true">
+          <div class="restaurant-link">
+            <div class="restaurant-logo skeleton-block"></div>
+            <div class="restaurant-content skeleton-content">
+              <div class="skeleton-line skeleton-line--short"></div>
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line skeleton-line--mid"></div>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="how-it-works-section reveal" aria-labelledby="how-it-works-title">
+      <h2 id="how-it-works-title">Как это работает</h2>
+      <div class="steps-grid">
+        <article class="step-card">
+          <span class="step-number">01</span>
+          <h3>Выберите ресторан</h3>
+          <p>Откройте карточку нужной площадки и перейдите в меню без лишних действий.</p>
+        </article>
+        <article class="step-card">
+          <span class="step-number">02</span>
+          <h3>Соберите заказ</h3>
+          <p>Добавьте позиции в корзину, измените количество и проверьте итоговую сумму.</p>
+        </article>
+        <article class="step-card">
+          <span class="step-number">03</span>
+          <h3>Оформите и отправьте</h3>
+          <p>Заполните checkout и отправьте заказ в backend с готовым JSON payload.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="benefits-section reveal" aria-labelledby="benefits-title">
+      <h2 id="benefits-title">Преимущества платформы</h2>
+      <div class="benefits-grid">
+        <article class="benefit-card"><h3>Быстрое QR-меню</h3><p>Гости сразу попадают в меню со смартфона.</p></article>
+        <article class="benefit-card"><h3>Онлайн-заказ</h3><p>Оформление заказа с валидацией и отправкой через API.</p></article>
+        <article class="benefit-card"><h3>Удобная корзина</h3><p>Понятный контроль количества, суммы и состава заказа.</p></article>
+        <article class="benefit-card"><h3>Лояльность</h3><p>Привязка телефона и подготовка для бонусной программы.</p></article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="platform-footer">
+    <div class="container">
+      <p>QR REST — платформа для современного restaurant digital flow.</p>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

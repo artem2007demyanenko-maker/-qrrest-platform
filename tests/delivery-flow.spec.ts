@@ -9,6 +9,7 @@ import {
   openCart,
   skipUnlessMutation,
   skipUnlessOrderCreation,
+  skipOrFail,
   submitCheckout,
 } from './test-helpers';
 
@@ -30,7 +31,7 @@ test.describe('Delivery checkout flow', () => {
     await expectCartVisible(page);
 
     const deliveryRadio = page.locator('input[name="order_type"][value="delivery"]').first();
-    test.skip(await deliveryRadio.count() === 0, 'Delivery order type is not available for this tenant.');
+    skipOrFail(test.skip, await deliveryRadio.count() === 0, 'Delivery order type is not available for this tenant.');
     await deliveryRadio.check({ force: true }).catch(() => undefined);
 
     await page.locator('input[name="delivery_full_name"]').first().fill('').catch(() => undefined);

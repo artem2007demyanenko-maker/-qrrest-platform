@@ -1,5 +1,8 @@
 <?php
 
+if (file_exists(__DIR__ . '/schema_guard.php')) {
+    require_once __DIR__ . '/schema_guard.php';
+}
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -31,6 +34,9 @@ function gw_guest_logout(): void {
 }
 
 function gw_guest_current(PDO $pdo): ?array {
+    if (!gw_guest_accounts_table_ready()) {
+        return null;
+    }
     $k = gw_session_key();
     if (empty($_SESSION[$k])) return null;
 
@@ -48,6 +54,18 @@ function gw_guest_set_session(int $guestId): void {
     $_SESSION[gw_session_key()] = $guestId;
 }
 
+function gw_guest_accounts_table_ready(): bool {
+    return function_exists('db_table_exists') ? db_table_exists('guest_accounts') : true;
+}
+
+function gw_guest_accounts_has_pin_hash(): bool {
+    return function_exists('db_column_exists') ? db_column_exists('guest_accounts', 'pin_hash') : true;
+}
+
+function gw_guest_accounts_has_password_hash(): bool {
+    return function_exists('db_column_exists') ? db_column_exists('guest_accounts', 'password_hash') : false;
+}
+
 function gw_guest_register(PDO $pdo, string $phoneRaw, string $name, string $pin): array {
     $errors = [];
 
@@ -63,6 +81,10 @@ function gw_guest_register(PDO $pdo, string $phoneRaw, string $name, string $pin
 
     if ($errors) return ['ok' => false, 'errors' => $errors];
 
+    if (!gw_guest_accounts_table_ready()) {
+        return ['ok' => false, 'errors' => ['Вход через Wallet временно недоступен для этой схемы базы.']];
+    }
+
     $stmt = $pdo->prepare("SELECT id FROM guest_accounts WHERE phone = :p LIMIT 1");
     $stmt->execute([':p' => $phone]);
     if ($stmt->fetch()) {
@@ -70,12 +92,27 @@ function gw_guest_register(PDO $pdo, string $phoneRaw, string $name, string $pin
     }
 
     $pinHash = password_hash($pin, PASSWORD_BCRYPT);
-
+    $cols = ['phone', 'name', 'created_at', 'updated_at'];
+    $vals = [':p', ':n', 'NOW()', 'NOW()'];
+    $params = [':p' => $phone, ':n' => $name];
+    if (gw_guest_accounts_has_pin_hash()) {
+        $cols[] = 'pin_hash';
+        $vals[] = ':pin_hash';
+        $params[':pin_hash'] = $pinHash;
+    }
+    if (gw_guest_accounts_has_password_hash()) {
+        $cols[] = 'password_hash';
+        $vals[] = ':password_hash';
+        $params[':password_hash'] = $pinHash;
+    }
+    if (count($cols) <= 4) {
+        return ['ok' => false, 'errors' => ['Wallet-схема устарела: нет поля для хранения PIN.']];
+    }
     $stmt = $pdo->prepare("
-        INSERT INTO guest_accounts (phone, name, pin_hash, created_at, updated_at)
-        VALUES (:p, :n, :h, NOW(), NOW())
+        INSERT INTO guest_accounts (" . implode(', ', $cols) . ")
+        VALUES (" . implode(', ', $vals) . ")
     ");
-    $stmt->execute([':p' => $phone, ':n' => $name, ':h' => $pinHash]);
+    $stmt->execute($params);
 
     return ['ok' => true, 'guest_id' => (int)$pdo->lastInsertId()];
 }
@@ -91,11 +128,23 @@ function gw_guest_login(PDO $pdo, string $phoneRaw, string $pin): array {
 
     if ($errors) return ['ok' => false, 'errors' => $errors];
 
+    if (!gw_guest_accounts_table_ready()) {
+        return ['ok' => false, 'errors' => ['Вход через Wallet временно недоступен для этой схемы базы.']];
+    }
+
     $stmt = $pdo->prepare("SELECT * FROM guest_accounts WHERE phone = :p LIMIT 1");
     $stmt->execute([':p' => $phone]);
     $g = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$g || !password_verify($pin, (string)$g['pin_hash'])) {
+    $authHash = '';
+    if ($g) {
+        if (gw_guest_accounts_has_pin_hash()) {
+            $authHash = (string)($g['pin_hash'] ?? '');
+        }
+        if ($authHash === '' && gw_guest_accounts_has_password_hash()) {
+            $authHash = (string)($g['password_hash'] ?? '');
+        }
+    }
+    if (!$g || $authHash === '' || !password_verify($pin, $authHash)) {
         return ['ok' => false, 'errors' => ['Неверный телефон или PIN.']];
     }
 

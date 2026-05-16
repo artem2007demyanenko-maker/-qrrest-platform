@@ -26,35 +26,38 @@ function retention_suggestions(int $restaurantId, ?int $daysInactive = null, int
     if (!function_exists('db')) {
         return [];
     }
-    $pdo = db();
     if (function_exists('db_table_exists') && !db_table_exists('crm_guests')) {
         return [];
     }
 
     try {
-        $cutoff = date('Y-m-d H:i:s', strtotime("-{$daysInactive} days"));
-        $stmt = $pdo->prepare("
-            SELECT id, phone, last_seen_at, visits_count
-            FROM crm_guests
-            WHERE restaurant_id = ?
-              AND consent = 1
-              AND (last_seen_at IS NULL OR last_seen_at < ?)
-              AND visits_count > 0
-            ORDER BY last_seen_at ASC
-            LIMIT " . (int) $limit
-        );
-        $stmt->execute([$restaurantId, $cutoff]);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $out = [];
-        foreach ($rows as $r) {
+        foreach (crm_confirmed_guest_metrics_rows($restaurantId) as $r) {
+            if ((int)($r['consent'] ?? 0) !== 1) {
+                continue;
+            }
+            $visits = (int)($r['visits_count'] ?? 0);
+            $lastSeen = $r['last_seen_at'] ? (string)$r['last_seen_at'] : null;
+            if ($visits <= 0) {
+                continue;
+            }
+            if ($lastSeen !== null && strtotime($lastSeen) >= strtotime("-{$daysInactive} days")) {
+                continue;
+            }
             $out[] = [
                 'id' => (int) $r['id'],
                 'phone' => (string) $r['phone'],
-                'last_seen_at' => $r['last_seen_at'] ? (string) $r['last_seen_at'] : null,
-                'visits_count' => (int) ($r['visits_count'] ?? 0),
+                'last_seen_at' => $lastSeen,
+                'visits_count' => $visits,
                 'suggestion' => 'Invite back with a special offer',
             ];
         }
+        usort($out, static function (array $a, array $b): int {
+            $aTs = !empty($a['last_seen_at']) ? strtotime((string)$a['last_seen_at']) : 0;
+            $bTs = !empty($b['last_seen_at']) ? strtotime((string)$b['last_seen_at']) : 0;
+            return $aTs <=> $bTs;
+        });
+        $out = array_slice($out, 0, $limit);
         return $out;
     } catch (Throwable $e) {
         if (function_exists('error_log')) {

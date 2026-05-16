@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../../app/bootstrap.php';
+require_once __DIR__ . '/../../app/order_payment_runtime.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -24,8 +25,14 @@ if (!$pdo instanceof PDO) {
     exit;
 }
 
+order_expire_due_orders($pdo, $restaurantId, $orderId, $tableId);
+
+$paymentTypeSelect = (function_exists('db_column_exists') && db_column_exists('orders', 'payment_type'))
+    ? 'payment_type'
+    : "'cash' AS payment_type";
+
 $stmt = $pdo->prepare("
-    SELECT id, table_id, order_status, payment_status, payment_type, created_at
+    SELECT id, table_id, order_status, payment_status, {$paymentTypeSelect}, created_at
     FROM orders
     WHERE id = :oid
       AND restaurant_id = :rid
@@ -41,29 +48,16 @@ if (!$order) {
 
 $paymentStatus = (string)($order['payment_status'] ?? 'unpaid');
 $paymentType = (string)($order['payment_type'] ?? 'cash');
-$createdTs = strtotime((string)($order['created_at'] ?? ''));
-$now = time();
-
-$offlineTypes = ['cash', 'card_later', 'pay_later'];
-$apply = ($paymentStatus === 'unpaid') && in_array($paymentType, $offlineTypes, true);
-
-$countdownActive = false;
-$countdownExpired = false;
-$secondsRemaining = null;
-$countdownMmss = null;
-
-if ($apply && $createdTs) {
-    $elapsedSeconds = max(0, $now - $createdTs);
-    $remaining = (10 * 60) - $elapsedSeconds;
-    $secondsRemaining = max(0, (int)$remaining);
-    $countdownExpired = $remaining <= 0;
-    $countdownActive = !$countdownExpired;
-    $countdownMmss = gmdate('i:s', $secondsRemaining);
-}
+$countdownMeta = order_payment_timer_meta($order);
+$countdownActive = (bool)$countdownMeta['active'];
+$countdownExpired = (bool)$countdownMeta['expired'];
+$secondsRemaining = $countdownMeta['seconds_remaining'];
+$countdownMmss = $countdownMeta['mmss'];
 
 echo json_encode([
     'success' => true,
     'order_id' => (int)$orderId,
+    'order_status' => (string)($order['order_status'] ?? ''),
     'payment_type' => $paymentType,
     'payment_status' => $paymentStatus,
     'countdown_active' => $countdownActive,
@@ -71,4 +65,3 @@ echo json_encode([
     'countdown_seconds_remaining' => $secondsRemaining,
     'countdown_mmss' => $countdownMmss,
 ], JSON_UNESCAPED_UNICODE);
-

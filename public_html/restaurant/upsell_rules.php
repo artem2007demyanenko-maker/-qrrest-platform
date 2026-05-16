@@ -1,6 +1,9 @@
 <?php
 
 require_once __DIR__ . '/../../app/bootstrap.php';
+if (file_exists(__DIR__ . '/../../app/runtime_schema_bootstrap.php')) {
+    require_once __DIR__ . '/../../app/runtime_schema_bootstrap.php';
+}
 
 $rid = bin2hex(random_bytes(4));
 set_exception_handler(function (Throwable $e) use ($rid) {
@@ -18,6 +21,10 @@ require_current_restaurant_role(['owner', 'admin']);
 
 $pdo = db();
 $restId = (int)$currentRestaurant['id'];
+if (function_exists('runtime_schema_ensure_upsell_rules')) {
+    runtime_schema_ensure_upsell_rules($pdo);
+}
+$upsellRulesTableReady = function_exists('db_table_exists') ? db_table_exists('upsell_rules') : true;
 
 // Soft upsell gating: allow read-only; block mutations when feature disabled (demo unchanged).
 $upsellEnabled = true;
@@ -52,6 +59,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $csrfOk = isset($_SESSION['csrf'], $_POST['csrf']) && hash_equals((string)$_SESSION['csrf'], (string)$_POST['csrf']);
     if (!$csrfOk) {
         $errors[] = 'Неверный токен. Обновите страницу.';
+    } elseif (!$upsellRulesTableReady) {
+        $errors[] = 'Таблица правил допродаж пока не создана. Примените миграции, чтобы редактировать правила.';
     } elseif (!$upsellEnabled) {
         $errors[] = 'Умные допродажи доступны на тарифе GROWTH. Подключите upsell в разделе тарифов.';
     } else {
@@ -99,13 +108,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $rules = [];
-try {
-    $stmt = $pdo->prepare("SELECT id, rule_type, rule_value, priority, active, created_at FROM upsell_rules WHERE restaurant_id = ? ORDER BY priority ASC, id ASC");
-    $stmt->execute([$restId]);
-    $rules = $stmt->fetchAll(PDO::FETCH_ASSOC);
-} catch (Throwable $e) {
-    error_log('upsell_rules list rid=' . $rid . ' ' . $e->getMessage());
-    $rules = [];
+if ($upsellRulesTableReady) {
+    try {
+        $stmt = $pdo->prepare("SELECT id, rule_type, rule_value, priority, active, created_at FROM upsell_rules WHERE restaurant_id = ? ORDER BY priority ASC, id ASC");
+        $stmt->execute([$restId]);
+        $rules = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        error_log('upsell_rules list rid=' . $rid . ' ' . $e->getMessage());
+        $rules = [];
+    }
 }
 ?>
 <!doctype html>
@@ -119,28 +130,12 @@ try {
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-50 flex">
-
-<aside class="w-64 bg-slate-950/80 border-r border-slate-800 p-4 hidden md:block">
-    <?= brand_restaurant_sidebar_header_html($currentRestaurant['name']) ?>
-    <nav class="space-y-2 text-sm">
-        <a href="/restaurant/dashboard.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Обзор</a>
-        <a href="/restaurant/revenue.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Доход</a>
-        <a href="/restaurant/menu_categories.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Категории меню</a>
-        <a href="/restaurant/menu_items.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Блюда</a>
-        <a href="/restaurant/tables.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Столы и QR</a>
-        <a href="/restaurant/qr_print.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">QR Print</a>
-        <a href="/restaurant/floorplan.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Карта столов</a>
-        <a href="/restaurant/orders.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Заказы</a>
-        <a href="/restaurant/upsells.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Допродажи</a>
-        <a href="/restaurant/upsell_rules.php" class="block px-3 py-2 rounded-xl bg-slate-800/70">Правила допродаж</a>
-        <a href="/restaurant/analytics_upsell.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Аналитика допродаж</a>
-        <a href="/restaurant/crm.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">CRM</a>
-        <a href="/restaurant/crm_campaigns.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">CRM кампании</a>
-        <a href="/restaurant/staff.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Сотрудники</a>
-        <a href="/restaurant/settings.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60">Настройки</a>
-        <a href="/logout.php" class="block px-3 py-2 rounded-xl hover:bg-slate-800/60 text-red-300">Выйти</a>
-    </nav>
-</aside>
+<?php
+$restaurantSidebarActive = 'upsell_rules';
+$restaurantSidebarName = (string)($currentRestaurant['name'] ?? 'Ресторан');
+require __DIR__ . '/_sidebar_mobile.php';
+?>
+<?php require __DIR__ . '/_sidebar.php'; ?>
 
 <main class="flex-1 p-4">
     <div class="max-w-4xl mx-auto space-y-4">
@@ -154,6 +149,11 @@ try {
             <p class="font-medium">Умные допродажи доступны на тарифе GROWTH</p>
             <p class="text-xs text-amber-200/80 mt-1">Подключите upsell, чтобы увеличивать средний чек и показывать рекомендации к заказу.</p>
             <a href="/owner/billing.php" class="inline-flex items-center mt-3 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium">Перейти на тариф GROWTH</a>
+        </div>
+        <?php endif; ?>
+        <?php if (!$upsellRulesTableReady): ?>
+        <div class="rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-3 text-sm text-slate-200" role="status">
+            Таблица `upsell_rules` отсутствует в текущей БД. Экран работает в safe read-only режиме без падений и без лог-флуда.
         </div>
         <?php endif; ?>
 
@@ -173,7 +173,7 @@ try {
                 <input type="hidden" name="action" value="add">
                 <div class="min-w-[200px]">
                     <label class="block text-[11px] text-slate-400 mb-1">Тип правила</label>
-                    <select name="rule_type" class="w-full rounded-2xl bg-slate-950 border border-slate-700 px-3 py-2 text-sm" <?= $upsellEnabled ? '' : 'disabled' ?>>
+                    <select name="rule_type" class="w-full rounded-2xl bg-slate-950 border border-slate-700 px-3 py-2 text-sm" <?= ($upsellEnabled && $upsellRulesTableReady) ? '' : 'disabled' ?>>
                         <option value="">— выбрать —</option>
                         <?php foreach ($ruleTypes as $k => $label): ?>
                             <option value="<?= e($k) ?>"><?= e($label) ?></option>
@@ -182,17 +182,17 @@ try {
                 </div>
                 <div class="w-24">
                     <label class="block text-[11px] text-slate-400 mb-1">Значение</label>
-                    <input type="text" name="rule_value" placeholder="например 3" maxlength="128" class="w-full rounded-2xl bg-slate-950 border border-slate-700 px-3 py-2 text-sm" <?= $upsellEnabled ? '' : 'readonly' ?>>
+                    <input type="text" name="rule_value" placeholder="например 3" maxlength="128" class="w-full rounded-2xl bg-slate-950 border border-slate-700 px-3 py-2 text-sm" <?= ($upsellEnabled && $upsellRulesTableReady) ? '' : 'readonly' ?>>
                 </div>
                 <div class="w-20">
                     <label class="block text-[11px] text-slate-400 mb-1">Приоритет</label>
-                    <input type="number" name="priority" value="100" min="0" max="999" class="w-full rounded-2xl bg-slate-950 border border-slate-700 px-3 py-2 text-sm" <?= $upsellEnabled ? '' : 'readonly' ?>>
+                    <input type="number" name="priority" value="100" min="0" max="999" class="w-full rounded-2xl bg-slate-950 border border-slate-700 px-3 py-2 text-sm" <?= ($upsellEnabled && $upsellRulesTableReady) ? '' : 'readonly' ?>>
                 </div>
                 <label class="flex items-center gap-2 text-sm">
-                    <input type="checkbox" name="active" value="1" checked class="rounded bg-slate-950 border-slate-700" <?= $upsellEnabled ? '' : 'disabled' ?>>
+                    <input type="checkbox" name="active" value="1" checked class="rounded bg-slate-950 border-slate-700" <?= ($upsellEnabled && $upsellRulesTableReady) ? '' : 'disabled' ?>>
                     Активно
                 </label>
-                <button type="submit" class="px-4 py-2 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-sm font-semibold" <?= $upsellEnabled ? '' : 'disabled' ?>>Добавить</button>
+                <button type="submit" class="px-4 py-2 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-sm font-semibold" <?= ($upsellEnabled && $upsellRulesTableReady) ? '' : 'disabled' ?>>Добавить</button>
             </form>
         </section>
 

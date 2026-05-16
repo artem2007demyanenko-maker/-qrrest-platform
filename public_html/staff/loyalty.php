@@ -1,18 +1,43 @@
 <?php
 require_once __DIR__ . '/../../app/bootstrap.php';
-
-require_login();
-
-if (!$currentRestaurant) {
-    http_response_code(404);
-    echo "Restaurant context required";
-    exit;
+if (file_exists(__DIR__ . '/../../app/guest_loyalty.php')) {
+    require_once __DIR__ . '/../../app/guest_loyalty.php';
 }
 
-require_restaurant_role((int)$currentRestaurant['id'], ['owner', 'admin', 'staff']);
+$rid = bin2hex(random_bytes(4));
+set_exception_handler(function (Throwable $e) use ($rid) {
+    error_log('STAFF_LOYALTY_PAGE_ERROR rid=' . $rid . ' ' . json_encode([
+        'uri' => $_SERVER['REQUEST_URI'] ?? '',
+        'message' => $e->getMessage(),
+        'file' => $e->getFile(),
+        'line' => $e->getLine(),
+        'time' => gmdate('c'),
+    ], JSON_UNESCAPED_UNICODE));
+    if (!headers_sent()) {
+        http_response_code(500);
+    }
+    echo '<h1>Ошибка</h1><p>Не удалось открыть экран лояльности. Попробуйте позже.</p><p style="font-size:11px;color:#666">RID: ' . htmlspecialchars($rid) . '</p>';
+    exit;
+});
+
+require_staff_login();
+if (!(function_exists('is_project_owner') && is_project_owner())) {
+    $ridRole = (int)($currentRestaurant['id'] ?? 0);
+    $staffRole = function_exists('current_user_restaurant_role') ? current_user_restaurant_role($ridRole) : null;
+    if (!in_array((string)$staffRole, ['owner', 'admin', 'waiter', 'staff'], true)) {
+        http_response_code(403);
+        echo 'Access denied';
+        exit;
+    }
+}
 
 $pdo = db();
-$restId = (int)$currentRestaurant['id'];
+$restId = (int)($currentRestaurant['id'] ?? 0);
+if ($restId <= 0) {
+    http_response_code(400);
+    echo 'Restaurant context required';
+    exit;
+}
 
 // Soft loyalty gating: allow read-only; mutations blocked on issue/scan (demo unchanged).
 $loyaltyEnabledByPlan = true;
@@ -39,7 +64,17 @@ if (function_exists('is_demo_mode') && is_demo_mode()) {
         ['type' => 'spend', 'points' => -5, 'created_at' => date('Y-m-d H:i:s', strtotime('-2 hours'))],
     ];
 } elseif (function_exists('guest_loyalty_analytics')) {
-    $analytics = guest_loyalty_analytics($pdo, $restId);
+    try {
+        $analytics = guest_loyalty_analytics($pdo, $restId);
+    } catch (Throwable $e) {
+        $analytics = [
+            'cards_issued' => 0,
+            'total_points_issued' => 0,
+            'total_points_spent' => 0,
+            'active_guests' => 0,
+            'recent_activity' => [],
+        ];
+    }
 }
 
 if (!function_exists('e')) {
@@ -73,11 +108,11 @@ if (!function_exists('e')) {
     <div class="grid sm:grid-cols-2 gap-4">
       <a href="/staff/loyalty_issue.php" class="rounded-3xl bg-slate-900/70 border border-slate-800 p-5 hover:border-emerald-500/60 transition-colors block <?= $loyaltyEnabledByPlan ? '' : 'opacity-75 pointer-events-none' ?>">
         <div class="text-sm font-semibold text-slate-100">Оформить карту гостя</div>
-        <div class="text-xs text-slate-400 mt-1">По телефону. Гость должен быть зарегистрирован в Wallet.</div>
+        <div class="text-xs text-slate-400 mt-1">По телефону. Гость должен один раз подтвердить номер в guest login, cabinet или QR-flow.</div>
       </a>
       <a href="/staff/loyalty_scan.php" class="rounded-3xl bg-slate-900/70 border border-slate-800 p-5 hover:border-emerald-500/60 transition-colors block <?= $loyaltyEnabledByPlan ? '' : 'opacity-75 pointer-events-none' ?>">
-        <div class="text-sm font-semibold text-slate-100">Сканировать QR</div>
-        <div class="text-xs text-slate-400 mt-1">Начислить или списать баллы по QR из приложения гостя.</div>
+        <div class="text-sm font-semibold text-slate-100">QR-карта и ручные операции</div>
+        <div class="text-xs text-slate-400 mt-1">Найдите гостя по QR или по номеру, начислите или спишите бонусы и при необходимости привяжите операцию к заказу.</div>
       </a>
     </div>
 

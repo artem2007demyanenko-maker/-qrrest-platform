@@ -1,6 +1,8 @@
 <?php
 
-
+if (!defined('MENU_ITEM_IMAGE_MAX_BYTES')) {
+    define('MENU_ITEM_IMAGE_MAX_BYTES', 10 * 1024 * 1024);
+}
 
 
 function ensure_storage_subdir(string $subdir): string
@@ -23,10 +25,14 @@ function ensure_storage_subdir(string $subdir): string
 
 function upload_menu_image(array $file): ?string
 {
-    if (empty($file['tmp_name']) || $file['error'] !== UPLOAD_ERR_OK) {
+    if (empty($file['tmp_name']) || (int)($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
         return null;
     }
 
+    $size = isset($file['size']) ? (int)$file['size'] : (int)@filesize((string)$file['tmp_name']);
+    if ($size <= 0 || $size > MENU_ITEM_IMAGE_MAX_BYTES) {
+        return null;
+    }
 
     $allowedMime = [
         'image/jpeg' => 'jpg',

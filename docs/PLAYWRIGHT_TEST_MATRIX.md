@@ -49,6 +49,32 @@ QRREST_E2E_MUTATION=1 QRREST_E2E_CREATE_ORDER=1 npm run smoke
 
 Use a disposable tenant and test menu items for mutating flows.
 
+## Stable Baseline Provisioning
+
+Use `tools/e2e_baseline.php` to create the minimal real data needed to avoid environment-driven skips:
+
+```bash
+export QRREST_E2E_PASSWORD='set-a-real-secret-outside-git'
+php tools/e2e_baseline.php --apply
+```
+
+Provisioned baseline:
+
+- `test` tenant by default, configurable through `QRREST_E2E_RESTAURANT_SUBDOMAIN`
+- Dedicated owner, waiter, kitchen, bar, cold, and dessert bindings through `users_restaurants`
+- One QR table and one visible `E2E Smoke Menu` category
+- Visible menu items routed to `kitchen`, `cold`, `bar`, and `dessert`
+- Optional active KDS order for station visibility/security checks
+
+After provisioning, set:
+
+```bash
+QRREST_E2E_TABLE_ID=<printed table_id>
+QRREST_E2E_MUTATION=1
+QRREST_E2E_CREATE_ORDER=1
+QRREST_E2E_STRICT=1
+```
+
 ## Current Stable Baseline
 
-Without credentials and mutation flags, the suite validates public/read-only flows and anonymous RBAC checks. Authenticated tests skip safely until credentials are provided.
+Without credentials and mutation flags, the suite validates public/read-only flows and anonymous RBAC checks. With the E2E baseline provisioned and strict mode enabled, missing data is reported as a failing setup issue instead of being skipped.

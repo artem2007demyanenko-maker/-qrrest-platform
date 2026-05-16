@@ -25,7 +25,7 @@ function stability_exception_handler(Throwable $e): void
     ];
     error_log('STABILITY_ERROR ' . json_encode($payload, JSON_UNESCAPED_UNICODE));
 
-    $wantsJson = (function_exists('auth_request_expects_json') && auth_request_expects_json())
+    $wantsJson = (function_exists('is_api_request') && is_api_request())
         || (strpos($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json') !== false)
         || (strpos($uri, '/health.php') !== false);
     if (!headers_sent()) {
@@ -63,5 +63,8 @@ function stability_error_handler(int $severity, string $message, string $file, i
         'rid'        => function_exists('app_rid') ? app_rid() : null,
     ];
     error_log('STABILITY_ERROR ' . json_encode($payload, JSON_UNESCAPED_UNICODE));
+    if (function_exists('is_api_request') && is_api_request()) {
+        return true;
+    }
     return false;
 }

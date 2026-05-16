@@ -1,10 +1,5 @@
 <?php
 
-
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-
 require_once __DIR__ . '/../../app/bootstrap.php';
 
 
@@ -20,7 +15,7 @@ if (function_exists('require_login')) {
 }
 
 $currentUser = function_exists('auth_user') ? auth_user() : null;
-if (!$currentUser || ($currentUser['global_role'] ?? null) !== 'project_owner') {
+if (!function_exists('is_project_owner') || !is_project_owner()) {
     http_response_code(403);
     echo "Доступ запрещён (только владелец платформы).";
     exit;
@@ -145,6 +140,13 @@ if (!$errMsg && $totalCount > 0) {
         $st->execute();
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
 
+        foreach ($rows as &$r) {
+            if (isset($r['table_name']) && function_exists('qr_public_owner_order_table_label')) {
+                $r['table_name'] = qr_public_owner_order_table_label((string)$r['table_name']);
+            }
+        }
+        unset($r);
+
         foreach ($rows as $r) {
             $amountSum += (float)($r['total_price'] ?? 0);
         }
@@ -249,13 +251,15 @@ if ($totalPages < 1) $totalPages = 1;
     </div>
 
     <div class="relative z-10 max-w-6xl mx-auto px-4 py-6 sm:py-8">
+        <?php $platformNavActive = 'transactions'; require __DIR__ . '/_platform_nav.php'; ?>
         <!-- Хедер -->
         <header class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-                <a href="/project-admin/index.php"
-                   class="inline-flex items-center gap-2 text-[11px] text-slate-500 hover:text-emerald-300 mb-2">
-                    ← Панель владельца платформы
-                </a>
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-[11px] text-slate-500">
+                    <a href="/project-admin/leads.php" class="hover:text-sky-300">Лиды</a>
+                    <a href="/project-admin/sales_forecast.php" class="hover:text-emerald-300">Sales Forecast</a>
+                    <a href="/project-admin/diagnostics.php" class="hover:text-slate-200">Diagnostics</a>
+                </div>
                 <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-700 text-[11px] text-slate-300 mb-2">
                     Финансы и заказы
                 </div>
@@ -382,6 +386,12 @@ if ($totalPages < 1) $totalPages = 1;
 
                         $tableName = $o['table_name'] ?? null;
                         $tableId   = $o['table_id'] ?? null;
+                        $tableDisplay = '';
+                        if ($tableName !== null && $tableName !== '') {
+                            $tableDisplay = function_exists('qr_public_owner_order_table_label')
+                                ? qr_public_owner_order_table_label((string)$tableName)
+                                : (string)$tableName;
+                        }
 
                         $amount   = (float)($o['total_price'] ?? 0);
                         $amountText = number_format($amount, 0, '.', ' ');
@@ -449,8 +459,8 @@ if ($totalPages < 1) $totalPages = 1;
                             <!-- Стол / гость -->
                             <div class="flex flex-col">
                                 <div class="text-[11px] text-slate-300">
-                                    <?php if ($tableName): ?>
-                                        Стол: <?= e($tableName) ?>
+                                    <?php if ($tableDisplay !== ''): ?>
+                                        <?= $tableDisplay === 'Доставка' ? 'Доставка' : ('Стол: ' . e($tableDisplay)) ?>
                                     <?php elseif ($tableId): ?>
                                         Стол ID: <?= (int)$tableId ?>
                                     <?php else: ?>
@@ -472,6 +482,11 @@ if ($totalPages < 1) $totalPages = 1;
                                 <div class="text-sm font-semibold text-slate-50">
                                     <?= e($amountText) ?> ₽
                                 </div>
+                                <?php if ($loySpent > 0): ?>
+                                    <div class="text-[11px] text-slate-500">
+                                        из <?= number_format($amount + $loySpent, 0, '.', ' ') ?> ₽ · −<?= number_format($loySpent, 0, '.', ' ') ?> бонусов
+                                    </div>
+                                <?php endif; ?>
                                 <span class="inline-flex w-fit px-2 py-1 rounded-full border text-[10px] <?= $orderStatusClass ?>">
                                     <?= e($orderStatusLabel) ?>
                                 </span>

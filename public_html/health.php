@@ -6,6 +6,31 @@
  */
 
 header('Content-Type: application/json; charset=utf-8');
+header('X-Robots-Tag: noindex, nofollow, noarchive');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+
+/**
+ * Best-effort writable check for directories.
+ * is_writable() can be misleading in some container/volume setups, so we also try a tiny probe write.
+ */
+function health_is_dir_effectively_writable(string $dir): bool
+{
+    if (!is_dir($dir)) {
+        return false;
+    }
+    if (is_writable($dir)) {
+        return true;
+    }
+    $probe = rtrim($dir, '/\\') . '/.health_probe_' . bin2hex(random_bytes(4));
+    $fh = @fopen($probe, 'wb');
+    if ($fh === false) {
+        return false;
+    }
+    @fwrite($fh, 'ok');
+    @fclose($fh);
+    @unlink($probe);
+    return true;
+}
 
 $out = [
     'status' => 'ok',
@@ -68,13 +93,48 @@ try {
     }
 
     $writable = [];
-    $base = __DIR__ . '/../storage';
-    foreach (['logs', 'backups'] as $sub) {
-        $dir = $base . '/' . $sub;
-        $writable[$sub] = is_dir($dir) ? is_writable($dir) : false;
+    $writableMeta = [];
+    $checks = [
+        'logs' => [
+            __DIR__ . '/../storage/logs',
+        ],
+        // In production backups live in /var/www/html/backups (compose volume), not storage/backups.
+        // Keep storage/backups as a legacy fallback for older/local layouts.
+        'backups' => [
+            __DIR__ . '/../backups',
+            __DIR__ . '/../storage/backups',
+        ],
+        // Dish images are served from uploads; include this in health to catch FS regressions early.
+        'uploads' => [
+            __DIR__ . '/uploads',
+            __DIR__ . '/../public_html/uploads',
+        ],
+    ];
+    foreach ($checks as $key => $candidates) {
+        $resolved = null;
+        foreach ($candidates as $candidate) {
+            if (!is_dir($candidate)) {
+                continue;
+            }
+            $resolved = $candidate;
+            $writable[$key] = health_is_dir_effectively_writable($candidate);
+            $writableMeta[$key] = [
+                'checked_path' => $candidate,
+                'realpath' => realpath($candidate) ?: $candidate,
+            ];
+            break;
+        }
+        if ($resolved === null) {
+            $writable[$key] = false;
+            $writableMeta[$key] = [
+                'checked_path' => $candidates[0] ?? null,
+                'realpath' => null,
+            ];
+        }
     }
     if (!empty($writable)) {
         $out['writable_checks'] = $writable;
+        $out['writable_checks_meta'] = $writableMeta;
     }
 
     $cronFile = __DIR__ . '/../storage/logs/cron_last_run.txt';

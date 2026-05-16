@@ -1,13 +1,10 @@
 <?php
 
-
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-
-
 require_once __DIR__ . '/../../app/bootstrap.php';
 require_once __DIR__ . '/../../app/billing.php';
+if (file_exists(__DIR__ . '/../../app/runtime_schema_bootstrap.php')) {
+    require_once __DIR__ . '/../../app/runtime_schema_bootstrap.php';
+}
 
 if (!function_exists('e')) {
     function e($v): string {
@@ -21,7 +18,7 @@ if (function_exists('require_login')) {
 }
 
 $currentUser = function_exists('auth_user') ? auth_user() : null;
-if (!$currentUser || ($currentUser['global_role'] ?? null) !== 'project_owner') {
+if (!function_exists('is_project_owner') || !is_project_owner()) {
     http_response_code(403);
     echo "Доступ запрещён (только владелец платформы).";
     exit;
@@ -33,18 +30,34 @@ if (!$pdo instanceof PDO) {
     echo "Ошибка: нет соединения с базой данных.";
     exit;
 }
+if (function_exists('runtime_schema_ensure_restaurants_owner_user_id')) {
+    runtime_schema_ensure_restaurants_owner_user_id($pdo);
+}
 
-$appConfigPath = __DIR__ . '/../../config.php';
+$appConfigPath = __DIR__ . '/../../app/config.php';
+$legacyConfigPath = __DIR__ . '/../../config.php';
 $appName       = 'QR-Rest Cloud';
 $mainDomain    = 'domain.ru';
+$protocol      = 'https';
 
 if (is_file($appConfigPath)) {
     $cfg = require $appConfigPath;
+} elseif (is_file($legacyConfigPath)) {
+    // Backward-compatible fallback for old deployments.
+    $cfg = require $legacyConfigPath;
+} else {
+    $cfg = [];
+}
+
+if (is_array($cfg)) {
     if (!empty($cfg['app']['name'])) {
         $appName = $cfg['app']['name'];
     }
     if (!empty($cfg['app']['main_domain'])) {
         $mainDomain = $cfg['app']['main_domain'];
+    }
+    if (!empty($cfg['app']['protocol'])) {
+        $protocol = (string)$cfg['app']['protocol'];
     }
 }
 
@@ -65,6 +78,9 @@ $restaurantStatuses = [
     'active'  => 'Активен',
     'blocked' => 'Заблокирован',
 ];
+$hasRestaurantDeletedAt = function_exists('db_column_exists') && db_column_exists('restaurants', 'deleted_at');
+$hasRestaurantOwnerUserId = function_exists('db_column_exists') && db_column_exists('restaurants', 'owner_user_id');
+$hasRestaurantStatus = function_exists('db_column_exists') && db_column_exists('restaurants', 'status');
 
 
 $ownersList = [];
@@ -90,6 +106,15 @@ function owner_label(?array $row): string {
     return $name;
 }
 
+function project_admin_restaurant_cabinet_url(string $subdomain, string $mainDomain, string $protocol): ?string {
+    $sub = trim($subdomain);
+    if ($sub === '' || !preg_match('~^[a-z0-9\-]+$~', $sub)) {
+        return null;
+    }
+    $host = preg_replace('/:\d+$/', '', $mainDomain);
+    return $protocol . '://' . $sub . '.' . $host . '/restaurant/dashboard.php';
+}
+
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'create_restaurant') {
     $csrfOk = isset($_POST['csrf'], $_SESSION['csrf']) && hash_equals((string)$_SESSION['csrf'], (string)$_POST['csrf']);
@@ -110,7 +135,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
         $errMsg = 'Поддомен может содержать только латиницу, цифры и дефис.';
     } else {
 
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM restaurants WHERE subdomain = :slug AND (deleted_at IS NULL)");
+        $deletedFilterSql = $hasRestaurantDeletedAt ? " AND (deleted_at IS NULL)" : "";
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM restaurants WHERE subdomain = :slug{$deletedFilterSql}");
         $stmt->execute([':slug' => $subdomain]);
         $exists = (int)$stmt->fetchColumn();
 
@@ -137,16 +163,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
                         }
                     }
                     if ($errMsg === '') {
-                        $stmt = $pdo->prepare("
-                            INSERT INTO restaurants (name, subdomain, owner_user_id, status, created_at)
-                            VALUES (:name, :subdomain, :owner, :status, NOW())
-                        ");
-                        $stmt->execute([
-                            ':name'      => $name,
+                        $insertCols = ['name', 'subdomain'];
+                        $insertVals = [':name', ':subdomain'];
+                        $insertParams = [
+                            ':name' => $name,
                             ':subdomain' => $subdomain,
-                            ':owner'     => $ownerId ?: null,
-                            ':status'    => $statusVal,
-                        ]);
+                        ];
+                        if ($hasRestaurantOwnerUserId) {
+                            $insertCols[] = 'owner_user_id';
+                            $insertVals[] = ':owner';
+                            $insertParams[':owner'] = $ownerId ?: null;
+                        }
+                        if ($hasRestaurantStatus) {
+                            $insertCols[] = 'status';
+                            $insertVals[] = ':status';
+                            $insertParams[':status'] = $statusVal;
+                        }
+                        $insertCols[] = 'created_at';
+                        $insertVals[] = 'NOW()';
+                        $stmt = $pdo->prepare("
+                            INSERT INTO restaurants (" . implode(', ', $insertCols) . ")
+                            VALUES (" . implode(', ', $insertVals) . ")
+                        ");
+                        $stmt->execute($insertParams);
                         $newId = (int)$pdo->lastInsertId();
                         $pdo->commit();
                         if (function_exists('audit_log')) {
@@ -184,7 +223,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
     if ($id <= 0) {
         $errMsg = 'Неверный ID ресторана.';
     } else {
-        $stmt = $pdo->prepare("SELECT * FROM restaurants WHERE id = :id AND (deleted_at IS NULL)");
+        $deletedFilterSql = $hasRestaurantDeletedAt ? " AND (deleted_at IS NULL)" : "";
+        $stmt = $pdo->prepare("SELECT * FROM restaurants WHERE id = :id{$deletedFilterSql}");
         $stmt->execute([':id' => $id]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -204,7 +244,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
 
                 $stmt = $pdo->prepare("
                     SELECT COUNT(*) FROM restaurants
-                    WHERE subdomain = :slug AND id <> :id AND (deleted_at IS NULL)
+                    WHERE subdomain = :slug AND id <> :id" . ($hasRestaurantDeletedAt ? " AND (deleted_at IS NULL)" : "") . "
                 ");
                 $stmt->execute([
                     ':slug' => $subdomain,
@@ -225,21 +265,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
                     }
 
                     try {
+                        $setSql = [
+                            'name = :name',
+                            'subdomain = :subdomain',
+                        ];
+                        $updateParams = [
+                            ':name' => $name,
+                            ':subdomain' => $subdomain,
+                            ':id' => $id,
+                        ];
+                        if ($hasRestaurantOwnerUserId) {
+                            $setSql[] = 'owner_user_id = :owner';
+                            $updateParams[':owner'] = $ownerId ?: null;
+                        }
+                        if ($hasRestaurantStatus) {
+                            $setSql[] = 'status = :status';
+                            $updateParams[':status'] = $statusVal;
+                        }
                         $stmt = $pdo->prepare("
                             UPDATE restaurants
-                            SET name = :name,
-                                subdomain = :subdomain,
-                                owner_user_id = :owner,
-                                status = :status
+                            SET " . implode(",\n                                ", $setSql) . "
                             WHERE id = :id
                         ");
-                        $stmt->execute([
-                            ':name'      => $name,
-                            ':subdomain' => $subdomain,
-                            ':owner'     => $ownerId ?: null,
-                            ':status'    => $statusVal,
-                            ':id'        => $id,
-                        ]);
+                        $stmt->execute($updateParams);
 
                         $okMsg = 'Изменения сохранены.';
                         header('Location: /project-admin/restaurants.php?edit=' . $id . '&saved=1');
@@ -283,6 +331,14 @@ try {
 
 $restaurants = [];
 try {
+    $ownerJoinSql = $hasRestaurantOwnerUserId
+        ? "LEFT JOIN users u ON u.id = r.owner_user_id"
+        : '';
+    $ownerSelectSql = $hasRestaurantOwnerUserId
+        ? "r.owner_user_id, u.name AS owner_name, u.email AS owner_email"
+        : "NULL AS owner_user_id, NULL AS owner_name, NULL AS owner_email";
+    $statusSelectSql = $hasRestaurantStatus ? "r.status" : "'active'";
+
     $where  = '1';
     $params = [];
 
@@ -292,8 +348,10 @@ try {
         $params[':q_name']    = '%' . $q . '%';
         $whereParts[]         = 'r.subdomain LIKE :q_sub';
         $params[':q_sub']     = '%' . $q . '%';
-        $whereParts[]         = 'u.email LIKE :q_email';
-        $params[':q_email']   = '%' . $q . '%';
+        if ($hasRestaurantOwnerUserId) {
+            $whereParts[]       = 'u.email LIKE :q_email';
+            $params[':q_email'] = '%' . $q . '%';
+        }
 
         if (ctype_digit($q)) {
             $whereParts[]     = 'r.id = :q_id';
@@ -303,7 +361,7 @@ try {
         $where = '(' . implode(' OR ', $whereParts) . ')';
     }
 
-    if ($status === 'active' || $status === 'blocked') {
+    if (($status === 'active' || $status === 'blocked') && $hasRestaurantStatus) {
         $where .= ' AND r.status = :st';
         $params[':st'] = $status;
     }
@@ -313,13 +371,11 @@ try {
             r.id,
             r.name,
             r.subdomain,
-            r.status,
+            {$statusSelectSql} AS status,
             r.created_at,
-            r.owner_user_id,
-            u.name  AS owner_name,
-            u.email AS owner_email
+            {$ownerSelectSql}
         FROM restaurants r
-        LEFT JOIN users u ON u.id = r.owner_user_id
+        {$ownerJoinSql}
         WHERE $where
         ORDER BY r.id DESC
         LIMIT 500
@@ -392,15 +448,14 @@ if ($saved && !$errMsg && !$okMsg) {
     </div>
 
     <div class="relative z-10 max-w-6xl mx-auto px-4 py-6 sm:py-8">
+        <?php $platformNavActive = 'restaurants'; require __DIR__ . '/_platform_nav.php'; ?>
         <!-- Хедер -->
         <header class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-                <div class="flex flex-wrap items-center gap-2 mb-2">
-                    <a href="/project-admin/index.php" class="text-[11px] text-slate-500 hover:text-emerald-300">← Панель</a>
-                    <span class="text-slate-600">|</span>
-                    <a href="/project-admin/leads.php" class="text-[11px] text-sky-400 hover:text-sky-300">Лиды</a>
-                    <a href="/project-admin/sales_forecast.php" class="text-[11px] text-emerald-400 hover:text-emerald-300">Sales Forecast</a>
-                    <a href="/project-admin/diagnostics.php" class="text-[11px] text-slate-400 hover:text-slate-200">Diagnostics</a>
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-[11px] text-slate-500">
+                    <a href="/project-admin/leads.php" class="hover:text-sky-300">Лиды</a>
+                    <a href="/project-admin/sales_forecast.php" class="hover:text-emerald-300">Sales Forecast</a>
+                    <a href="/project-admin/diagnostics.php" class="hover:text-slate-200">Diagnostics</a>
                 </div>
                 <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-700 text-[11px] text-slate-300 mb-2">
                     Управление ресторанами
@@ -545,6 +600,7 @@ if ($saved && !$errMsg && !$okMsg) {
                                     }
                                 }
                                 $billingBadge = '';
+                                $cabinetUrl = project_admin_restaurant_cabinet_url((string)($r['subdomain'] ?? ''), $mainDomain, $protocol);
                                 if (!empty($r['owner_user_id']) && function_exists('billing_get_trial_info')) {
                                     try {
                                         $ti = billing_get_trial_info((int)$r['owner_user_id'], (int)$r['id']);
@@ -611,10 +667,16 @@ if ($saved && !$errMsg && !$okMsg) {
                                                class="inline-flex items-center px-2.5 py-1.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-100 border border-slate-700 transition">
                                                 Настроить
                                             </a>
-                                            <a href="/owner/dashboard.php?restaurant_id=<?= $rid ?>"
-                                               class="inline-flex items-center px-2.5 py-1.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-[11px] text-slate-200 border border-slate-700 transition">
-                                                В панель ресторана
-                                            </a>
+                                            <?php if ($cabinetUrl !== null): ?>
+                                                <a href="<?= e($cabinetUrl) ?>" target="_blank" rel="noopener noreferrer"
+                                                   class="inline-flex items-center px-2.5 py-1.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-[11px] text-slate-200 border border-slate-700 transition">
+                                                    В панель ресторана
+                                                </a>
+                                            <?php else: ?>
+                                                <span class="inline-flex items-center px-2.5 py-1.5 rounded-2xl bg-slate-950 text-[11px] text-slate-500 border border-slate-800">
+                                                    Нет валидного поддомена
+                                                </span>
+                                            <?php endif; ?>
                                         </div>
                                     </div>
                                 </div>

@@ -5,6 +5,8 @@
  * When tables are missing, defaults to free plan and allows all (no errors).
  */
 
+require_once __DIR__ . '/restaurant_full_access.php';
+
 $GLOBALS['_plans_config'] = null;
 
 function _subscription_plans_config(): array
@@ -33,6 +35,10 @@ function get_restaurant_plan(int $restaurantId): array
 {
     $restaurantId = (int) $restaurantId;
     $default = ['plan' => 'free', 'status' => 'active'];
+
+    if (function_exists('restaurant_has_full_access_override') && restaurant_has_full_access_override($restaurantId)) {
+        return ['plan' => 'pro', 'status' => 'active'];
+    }
 
     if (!function_exists('db') || !function_exists('db_table_exists')) {
         return $default;
@@ -86,6 +92,9 @@ function get_restaurant_plan(int $restaurantId): array
  */
 function check_feature(int $restaurantId, string $feature): bool
 {
+    if (function_exists('restaurant_has_full_access_override') && restaurant_has_full_access_override((int)$restaurantId)) {
+        return true;
+    }
     $planData = get_restaurant_plan($restaurantId);
     $planKey = $planData['plan'];
     $config = _subscription_plans_config();
@@ -107,6 +116,9 @@ function check_feature(int $restaurantId, string $feature): bool
 function check_limit(int $restaurantId, string $metric): bool
 {
     $restaurantId = (int) $restaurantId;
+    if (function_exists('restaurant_has_full_access_override') && restaurant_has_full_access_override($restaurantId)) {
+        return true;
+    }
     $planData = get_restaurant_plan($restaurantId);
     $config = _subscription_plans_config();
     $planKey = $planData['plan'];
@@ -305,6 +317,9 @@ function get_limit_state(int $restaurantId, string $metric): array
         'state'   => 'unlimited',
     ];
     if ($restaurantId <= 0 || $metric === '') {
+        return $result;
+    }
+    if (function_exists('restaurant_has_full_access_override') && restaurant_has_full_access_override($restaurantId)) {
         return $result;
     }
 

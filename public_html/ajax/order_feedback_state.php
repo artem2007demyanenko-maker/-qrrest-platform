@@ -8,6 +8,9 @@ require_once __DIR__ . '/../../app/bootstrap.php';
 if (file_exists(__DIR__ . '/../../app/schema_guard.php')) {
     require_once __DIR__ . '/../../app/schema_guard.php';
 }
+if (file_exists(__DIR__ . '/../../app/runtime_schema_bootstrap.php')) {
+    require_once __DIR__ . '/../../app/runtime_schema_bootstrap.php';
+}
 require_once __DIR__ . '/../../app/order_feedback_guard.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -34,6 +37,9 @@ if (!function_exists('db_table_exists') || !db_table_exists('orders')) {
 }
 
 $pdo = db();
+if (function_exists('runtime_schema_ensure_guest_reviews')) {
+    runtime_schema_ensure_guest_reviews($pdo);
+}
 
 try {
     $stmt = $pdo->prepare('SELECT id, restaurant_id, table_id, order_status FROM orders WHERE id = :oid LIMIT 1');
@@ -75,20 +81,32 @@ try {
         exit;
     }
 
-    if (!function_exists('db_table_exists') || !db_table_exists('order_feedback')) {
+    $hasLegacyFeedback = function_exists('db_table_exists') && db_table_exists('order_feedback');
+    $hasGuestReviews = function_exists('db_table_exists') && db_table_exists('guest_reviews');
+    if (!$hasLegacyFeedback && !$hasGuestReviews) {
         echo json_encode(['success' => false, 'eligible' => false, 'feedback_exists' => false, 'message' => 'Форма отзывов временно недоступна.']);
         exit;
     }
 
-    $fbStmt = $pdo->prepare('SELECT id FROM order_feedback WHERE order_id = :oid LIMIT 1');
-    $fbStmt->execute([':oid' => $orderId]);
-    if ($fbStmt->fetch(PDO::FETCH_ASSOC)) {
+    $feedbackExists = false;
+    if ($hasGuestReviews) {
+        $fbStmt = $pdo->prepare('SELECT id FROM guest_reviews WHERE order_id = :oid LIMIT 1');
+        $fbStmt->execute([':oid' => $orderId]);
+        $feedbackExists = (bool)$fbStmt->fetch(PDO::FETCH_ASSOC);
+    }
+    if (!$feedbackExists && $hasLegacyFeedback) {
+        $fbStmt = $pdo->prepare('SELECT id FROM order_feedback WHERE order_id = :oid LIMIT 1');
+        $fbStmt->execute([':oid' => $orderId]);
+        $feedbackExists = (bool)$fbStmt->fetch(PDO::FETCH_ASSOC);
+    }
+    if ($feedbackExists) {
         echo json_encode(['success' => true, 'eligible' => false, 'feedback_exists' => true, 'stop_feedback_retry' => true]);
         exit;
     }
 
     if (function_exists('db_column_exists') && db_column_exists('orders', 'order_status')) {
-        if (($order['order_status'] ?? '') !== 'delivered') {
+        $status = mb_strtolower(trim((string)($order['order_status'] ?? '')), 'UTF-8');
+        if (!in_array($status, ['delivered', 'completed'], true)) {
             echo json_encode(['success' => true, 'eligible' => false, 'feedback_exists' => false]);
             exit;
         }

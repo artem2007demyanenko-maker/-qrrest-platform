@@ -34,6 +34,9 @@ env_guard_check($config);
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: strict-origin-when-cross-origin');
+if (function_exists('brand_is_test_host') && brand_is_test_host($config)) {
+    header('X-Robots-Tag: noindex, nofollow, noarchive');
+}
 header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data:;");
 if (!empty($config['app']['protocol']) && strtolower($config['app']['protocol']) === 'https'
     && !empty($config['app']['hsts'])) {
@@ -56,7 +59,9 @@ require_once __DIR__ . '/demo.php';
 require_once __DIR__ . '/permissions.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/qr_helpers.php';
+require_once __DIR__ . '/qr_public_menu.php';
 require_once __DIR__ . '/upload_helpers.php';
+require_once __DIR__ . '/cookie_consent.php';
 require_once __DIR__ . '/logging.php';
 require_once __DIR__ . '/themes.php';
 require_once __DIR__ . '/loyalty.php';
@@ -66,6 +71,11 @@ require_once __DIR__ . '/guest_loyalty.php';
 set_exception_handler('stability_exception_handler');
 set_error_handler('stability_error_handler');
 auth_start_session();
+
+if (!defined('QR_COOKIE_CONSENT_BUFFER_ENABLED') && PHP_SAPI !== 'cli') {
+    define('QR_COOKIE_CONSENT_BUFFER_ENABLED', true);
+    ob_start('qr_cookie_consent_inject_html');
+}
 
 
 if (function_exists('get_current_restaurant_or_null')) {

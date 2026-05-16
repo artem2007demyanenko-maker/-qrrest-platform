@@ -100,7 +100,25 @@ function security_rate_limit(string $key, int $limit, int $window_sec): bool
         static $schemaMissingRlLogged = false;
         if (!$schemaMissingRlLogged) {
             $schemaMissingRlLogged = true;
+            if (session_status() === PHP_SESSION_NONE && function_exists('auth_start_session')) {
+                auth_start_session();
+            }
+            if (!isset($_SESSION) || !is_array($_SESSION)) {
+                $_SESSION = [];
+            }
+            if (!isset($_SESSION['_schema_missing_log']) || !is_array($_SESSION['_schema_missing_log'])) {
+                $_SESSION['_schema_missing_log'] = [];
+            }
+            $now = time();
+            $ttl = 3600;
+            $lastTs = (int)($_SESSION['_schema_missing_log']['security_rate_limits'] ?? 0);
+            $canLog = ($lastTs <= 0 || ($now - $lastTs) >= $ttl);
+            if ($canLog) {
+                $_SESSION['_schema_missing_log']['security_rate_limits'] = $now;
+            }
+            if ($canLog) {
             error_log('SCHEMA_MISSING security_rate_limits uri=' . ($_SERVER['REQUEST_URI'] ?? '') . ' env=' . $appEnv . ' rate_limit_fallback');
+            }
         }
         if ($appEnv === 'production') {
             return security_rate_limit_session_fallback($key, $limit, $window_sec);

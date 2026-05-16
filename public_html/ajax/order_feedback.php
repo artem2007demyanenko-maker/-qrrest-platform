@@ -7,6 +7,9 @@ require_once __DIR__ . '/../../app/bootstrap.php';
 if (file_exists(__DIR__ . '/../../app/schema_guard.php')) {
     require_once __DIR__ . '/../../app/schema_guard.php';
 }
+if (file_exists(__DIR__ . '/../../app/runtime_schema_bootstrap.php')) {
+    require_once __DIR__ . '/../../app/runtime_schema_bootstrap.php';
+}
 require_once __DIR__ . '/../../app/order_feedback_guard.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -18,6 +21,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
 }
 
 $pdo = db();
+if (function_exists('runtime_schema_ensure_guest_reviews')) {
+    runtime_schema_ensure_guest_reviews($pdo);
+}
 
 $orderIdRaw = trim((string)($_POST['order_id'] ?? ''));
 $tableIdRaw = trim((string)($_POST['table_id'] ?? ''));
@@ -39,7 +45,13 @@ if ($rating < 1 || $rating > 5) {
 
 $comment = mb_substr($comment, 0, 2000);
 
-if (!function_exists('db_table_exists') || !db_table_exists('order_feedback') || !db_table_exists('orders')) {
+if (!function_exists('db_table_exists') || !db_table_exists('orders')) {
+    echo json_encode(['success' => false, 'message' => 'Форма отзывов временно недоступна.']);
+    exit;
+}
+$hasLegacyFeedback = db_table_exists('order_feedback');
+$hasGuestReviews = db_table_exists('guest_reviews');
+if (!$hasLegacyFeedback && !$hasGuestReviews) {
     echo json_encode(['success' => false, 'message' => 'Форма отзывов временно недоступна.']);
     exit;
 }
@@ -83,7 +95,8 @@ try {
     }
 
     if (function_exists('db_column_exists') && db_column_exists('orders', 'order_status')) {
-        if (($order['order_status'] ?? '') !== 'delivered') {
+        $status = mb_strtolower(trim((string)($order['order_status'] ?? '')), 'UTF-8');
+        if (!in_array($status, ['delivered', 'completed'], true)) {
             echo json_encode(['success' => false, 'message' => 'Отзыв доступен после получения заказа.']);
             exit;
         }
@@ -95,23 +108,34 @@ try {
         exit;
     }
 
-    $check = $pdo->prepare('SELECT id FROM order_feedback WHERE order_id = :oid LIMIT 1');
-    $check->execute([':oid' => $orderId]);
-    if ($check->fetch(PDO::FETCH_ASSOC)) {
+    $alreadyExists = false;
+    if ($hasGuestReviews) {
+        $check = $pdo->prepare('SELECT id FROM guest_reviews WHERE order_id = :oid LIMIT 1');
+        $check->execute([':oid' => $orderId]);
+        $alreadyExists = (bool)$check->fetch(PDO::FETCH_ASSOC);
+    }
+    if (!$alreadyExists && $hasLegacyFeedback) {
+        $check = $pdo->prepare('SELECT id FROM order_feedback WHERE order_id = :oid LIMIT 1');
+        $check->execute([':oid' => $orderId]);
+        $alreadyExists = (bool)$check->fetch(PDO::FETCH_ASSOC);
+    }
+    if ($alreadyExists) {
         echo json_encode(['success' => true]);
         exit;
     }
 
-    $stmt = $pdo->prepare('
-        INSERT INTO order_feedback (order_id, restaurant_id, rating, comment, created_at)
-        VALUES (:oid, :rest, :rating, :comment, NOW())
-    ');
-    $stmt->execute([
-        ':oid' => $orderId,
-        ':rest' => $restaurantId,
-        ':rating' => $rating,
-        ':comment' => $comment === '' ? null : $comment,
-    ]);
+    if ($hasLegacyFeedback) {
+        $stmt = $pdo->prepare('
+            INSERT INTO order_feedback (order_id, restaurant_id, rating, comment, created_at)
+            VALUES (:oid, :rest, :rating, :comment, NOW())
+        ');
+        $stmt->execute([
+            ':oid' => $orderId,
+            ':rest' => $restaurantId,
+            ':rating' => $rating,
+            ':comment' => $comment === '' ? null : $comment,
+        ]);
+    }
     unset($_SESSION[$sessionTokenKey]);
 } catch (Throwable $e) {
     $msg = $e->getMessage();
